@@ -1,2 +1,2 @@
-# PhIP (Physical Information Protocol)
+# PhIP - Physical Information Protocol
 Physical Information Protocol
