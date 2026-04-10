@@ -1,0 +1,53 @@
+# Changelog
+
+All notable changes to the PhIP specification will be documented in this file.
+
+## [0.1.0-draft] — 2026-04-09
+
+### Added
+- Initial draft of PhIP Core Specification
+- URI scheme definition (Section 4)
+- Object model with four required fields (Section 5)
+- Seven object types (Section 6)
+- Seven core relation types (Section 7)
+- Schema namespace extensibility mechanism (Section 8)
+- Nine lifecycle states with enforced transitions (Section 9)
+- Event log with hash chain structure (Section 10)
+- Trust model with Ed25519 signing and capability tokens (Section 11)
+- Three protocol operations: GET, PUSH, QUERY (Section 12)
+- Conformance requirements (Section 13)
+- Sub-object addressing via URI path segments (Section 4.4)
+- `vehicle` object type for mobile locations (Section 6, 6.1)
+- Condition layer separate from lifecycle state (Section 9.3)
+- `process` event type for N-to-M physical transformations (Section 10.4)
+- Lot split and merge operations (Section 10.5)
+- IoT/automated actor guidance and telemetry boundary (Section 11.4)
+- Cross-org relation write ownership rules (Section 11.3.1)
+- Appendix A: open issues identified through scenario stress-testing
+- CREATE protocol operation (Section 12.1) — objects can now be registered
+- Dual-track lifecycle: manufacturing track (concept through disposed) and 
+  operational track (active/inactive/archived) for actor/location/vehicle (Section 9.1–9.3)
+- `consumed` terminal state for subdivided/transformed objects (Section 9.2)
+- Canonical JSON serialization specified as RFC 8785 / JCS (Section 10.3)
+
+### Changed
+- Hash chain definition clarified: hash computed over complete preceding event 
+  including all fields (Section 10.3)
+- Protocol operations renumbered: CREATE (12.1), GET (12.2), PUSH (12.3), 
+  QUERY (12.4)
+- Lot splits and process event consumed inputs now transition to `consumed` 
+  instead of `disposed` (Sections 10.4, 10.5)
+- Conformance requirements updated for CREATE, lifecycle tracks, process 
+  validation, and JCS (Section 13)
+- Appendix A reorganized with severity ratings (Blocker/High/Medium/Low) and 
+  expanded to 32 open issues from systematic review
+- `planned` state added to operational lifecycle track (Section 9.3)
+- Object fields declared as projections of event history (Section 5.1)
+- Process event atomicity downgraded to SHOULD with explicit deferral note 
+  for cross-namespace transactions (Section 10.4)
+- Hash chain verification: MUST on first untrusted retrieval, MAY cache 
+  (Section 10.3)
+- Foreign namespace CREATE explicitly disallowed (Section 12.1)
+- `consumed` reachable from `qualified` and `stock` on manufacturing track
+- Appendix A sorted into "must resolve before reference implementation" 
+  (7 issues) and "can defer to post-v0.1" (23 issues). 11 issues now resolved
