@@ -326,20 +326,57 @@ PhIP Objects. Each relation is a tuple of (type, phip_id).
 
 ### 7.2 Relation Format
 
+Each relation is a tuple of (type, phip_id) with an optional `metadata` 
+object for positional, structural, or qualifying information.
+
 ```json
 {
   "relations": [
     {
       "type": "contains",
-      "phip_id": "phip://samsung.com/drives/MZ7L3960-SN8821"
+      "phip_id": "phip://samsung.com/drives/MZ7L3960-SN8821",
+      "metadata": {
+        "slot": "drive-bay-3",
+        "position": "front"
+      }
     },
     {
       "type": "located_at",
-      "phip_id": "phip://google.com/locations/SJC-DC4/row-7/rack-A/U12"
+      "phip_id": "phip://google.com/locations/SJC-DC4/row-7/rack-A/U12",
+      "metadata": {
+        "rack_unit": 12,
+        "orientation": "front"
+      }
     }
   ]
 }
 ```
+
+The `metadata` field is OPTIONAL. When present, it is a flat object of 
+key-value pairs. PhIP defines no required metadata fields — the content 
+is domain-specific and fully extensible. Common metadata fields include 
+`slot`, `position`, `orientation`, `port`, and `rack_unit`.
+
+Relation metadata MUST be included in `relation_added` event payloads 
+so that it is part of the signed event chain:
+
+```json
+{
+  "type": "relation_added",
+  "payload": {
+    "relation": {
+      "type": "contains",
+      "phip_id": "phip://samsung.com/drives/MZ7L3960-SN8821",
+      "metadata": {
+        "slot": "drive-bay-3"
+      }
+    }
+  }
+}
+```
+
+Relation metadata is not namespaced (unlike object attributes) because 
+it carries simple positional or structural data, not rich domain schemas.
 
 ### 7.3 Custom Relations
 
@@ -675,31 +712,209 @@ is required.
 
 ### 11.2 Key Resources
 
-[TODO: define public key resource format]
+A key resource is a PhIP object on the operational lifecycle track 
+(`planned`, `active`, `inactive`, `archived`). Keys use the `actor` 
+object type and carry their cryptographic material in the `phip:keys` 
+attribute namespace.
+
+#### 11.2.1 Key Object Format
+
+```json
+{
+  "phip_id": "phip://droyd.com/keys/ops-signing-2026",
+  "object_type": "actor",
+  "state": "active",
+  "identity": {
+    "label": "Droyd Operations Signing Key 2026"
+  },
+  "relations": [
+    { "type": "manufactured_by", "phip_id": "phip://droyd.com/actors/root-authority" }
+  ],
+  "attributes": {
+    "phip:keys": {
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "x": "base64url-encoded-public-key",
+      "not_before": "2026-01-01T00:00:00Z",
+      "not_after": "2027-01-01T00:00:00Z"
+    }
+  },
+  "history": [ ... ]
+}
+```
+
+The `phip:keys` namespace uses JWK (RFC 7517) fields for the 
+cryptographic material (`kty`, `crv`, `x`), extended with PhIP-specific 
+validity fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `kty` | string | MUST | Key type. MUST be `"OKP"` for Ed25519 |
+| `crv` | string | MUST | Curve. MUST be `"Ed25519"` |
+| `x` | string | MUST | Public key, base64url-encoded |
+| `not_before` | string (ISO 8601) | MUST | Start of key validity window |
+| `not_after` | string (ISO 8601) | MUST | End of key validity window |
+
+Private keys MUST NOT appear in key resources. Only public keys are 
+published.
+
+#### 11.2.2 Key Validity
+
+An event signature is valid if and only if:
+
+1. The `key_id` resolves to an `active` key resource
+2. The event's `timestamp` falls within the key's `not_before` / 
+   `not_after` window
+3. The cryptographic signature verifies against the public key
+
+A key transitions to `inactive` when revoked (compromised or 
+superseded). A key transitions to `archived` when it has expired and is 
+retained for historical verification only.
+
+Events signed before a key's `not_after` or before its transition to 
+`inactive` remain valid. Events signed after either boundary MUST be 
+rejected by the resolver.
+
+#### 11.2.3 Key Rotation
+
+To rotate keys, an authority:
+
+1. Creates a new key object signed by the current active key
+2. Transitions the old key to `inactive` (if revoking) or allows it to 
+   expire naturally (if retiring)
+
+Multiple keys MAY be `active` simultaneously during a rotation window. 
+Verifiers MUST accept signatures from any `active` key whose validity 
+window covers the event timestamp.
+
+#### 11.2.4 Bootstrap Key
+
+An authority's first key has no prior key to sign its `created` event. 
+The bootstrap key's `created` event is self-signed — the key signs its 
+own creation. This is analogous to a self-signed root certificate in 
+X.509.
+
+A self-signed bootstrap key MUST be the first object created in any 
+new PhIP namespace. All subsequent object creation events MUST be signed 
+by the bootstrap key or by a key whose trust chain traces back to it.
+
+Verifiers encountering a self-signed key MUST treat it as a trust anchor 
+for that authority. Cross-authority trust (whether to trust another 
+authority's bootstrap key) is outside the scope of this specification.
+
+#### 11.2.5 Key Caching
+
+Key resources change infrequently. Resolvers serving key objects SHOULD 
+return `Cache-Control: max-age=86400` (24 hours) or longer. Verifiers 
+SHOULD cache resolved keys aggressively and revalidate only when a 
+signature references an unknown `key_id` or when the cached key's 
+`not_after` has passed.
 
 ### 11.3 Capability Tokens
 
 To push events to objects in a foreign namespace, an actor MUST present 
 a capability token issued by the namespace authority.
 
+#### 11.3.1 Token Format
+
 ```json
 {
   "phip_capability": "1.0",
+  "token_id": "cap-uuid-...",
   "granted_by": "phip://apple.com/actors/supply-chain-auth",
   "granted_to": "phip://foxconn.com/actors/build-system",
   "scope": "push_events",
   "object_filter": "phip://apple.com/objects/logic-board-*",
   "not_before": "2026-01-01T00:00:00Z",
-  "expires": "2026-12-31T23:59:59Z",
-  "signature": {}
+  "expires": "2026-06-30T23:59:59Z",
+  "signature": {
+    "algorithm": "Ed25519",
+    "key_id": "phip://apple.com/keys/supply-chain-signing-2026",
+    "value": "base64url:..."
+  }
 }
 ```
 
-A resolver MUST verify the capability token before accepting a cross-org 
-push. Tokens MUST be signed by the granting authority. Expired or 
-unverifiable tokens MUST be rejected.
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `phip_capability` | string | MUST | Version. MUST be `"1.0"` |
+| `token_id` | string (UUID) | MUST | Unique identifier for this token |
+| `granted_by` | PhIP URI | MUST | The authority issuing the token. MUST be an `actor` in the target namespace |
+| `granted_to` | PhIP URI | MUST | The actor authorized to use this token |
+| `scope` | string | MUST | Permission granted. See 11.3.2 |
+| `object_filter` | string | MUST | Glob pattern matching target `phip_id`s. Uses `*` for wildcard |
+| `not_before` | string (ISO 8601) | MUST | Token validity start |
+| `expires` | string (ISO 8601) | MUST | Token validity end |
+| `signature` | object | MUST | Signature by the granting authority's key |
 
-#### 11.3.1 Cross-Org Relation Writes
+The `object_filter` uses simple glob syntax with `*` as the only 
+wildcard character. `phip://apple.com/objects/logic-board-*` matches 
+any object whose `phip_id` starts with that prefix.
+
+#### 11.3.2 Scope Vocabulary
+
+| Scope | Grants |
+|---|---|
+| `push_events` | Append any event type to matching objects |
+| `push_state` | Append `state_transition` events only |
+| `push_measurements` | Append `measurement` events only |
+| `push_relations` | Append `relation_added` and `relation_removed` events only |
+
+A token with `push_events` scope is a broad grant. The narrower scopes 
+allow fine-grained delegation: a carrier transporting goods may receive 
+`push_relations` (to update `located_at`) but not `push_state`. A sensor 
+may receive `push_measurements` but nothing else.
+
+#### 11.3.3 Token Presentation
+
+Capability tokens are presented via HTTP header on PUSH requests:
+
+```
+Authorization: PhIP-Capability <base64url-encoded-token>
+```
+
+The custom `PhIP-Capability` scheme is used instead of `Bearer` because 
+the token is self-contained and verifiable without contacting an 
+authorization server.
+
+Tokens MUST NOT be placed in the request body or query parameters. 
+Request body is reserved for the event payload. Query parameters appear 
+in server logs.
+
+#### 11.3.4 Token Verification
+
+A resolver MUST verify the following before accepting a cross-org push, 
+in order:
+
+1. Decode the token from the `Authorization` header
+2. Verify the token's `signature` by resolving the `key_id` and checking 
+   against the `granted_by` authority's public key
+3. Check that the current time falls within `not_before` / `expires`
+4. Check that the pushing actor's `phip_id` matches `granted_to`
+5. Check that the target object's `phip_id` matches `object_filter`
+6. Check that the event type is permitted by `scope`
+
+If any check fails, the resolver MUST return `INVALID_CAPABILITY` (403). 
+If no token is presented on a cross-org push, the resolver MUST return 
+`MISSING_CAPABILITY` (403).
+
+#### 11.3.5 Token Lifecycle
+
+Tokens are issued out of band — the authority creates and signs the 
+token and delivers it to the grantee via any mechanism (API call, secure 
+email, manual exchange). PhIP v0.1 does not define an issuance protocol.
+
+Tokens are short-lived by design. The `not_before` / `expires` window 
+provides the primary security boundary. Resolvers SHOULD reject tokens 
+with validity windows exceeding a configurable maximum (RECOMMENDED: 
+90 days).
+
+Revocation in v0.1 is handled by expiry. If a token must be invalidated 
+before its `expires` time, the authority SHOULD rotate the signing key 
+used to issue it, which invalidates all tokens signed by that key. 
+Formal revocation lists are deferred to a future version.
+
+#### 11.3.6 Cross-Org Relation Writes
 
 When an object in namespace A has a `located_at` relation pointing to an 
 object in namespace B (e.g., cargo located at a rail car), updating that 
@@ -707,11 +922,10 @@ relation requires a capability token from namespace A. The relation is
 owned by the object it is attached to, not the target it points to.
 
 During custody transfers (e.g., goods in transit), the shipping party 
-SHOULD issue a scoped capability token to the carrier, allowing the carrier 
-to push `relation_added` and `relation_removed` events for `located_at` 
-relations on the shipped objects.
-
-[TODO: define token issuance and revocation]
+SHOULD issue a capability token with `push_relations` scope to the 
+carrier, allowing the carrier to push `relation_added` and 
+`relation_removed` events for `located_at` relations on the shipped 
+objects.
 
 ### 11.4 Automated and IoT Actors
 
@@ -817,6 +1031,62 @@ Optional query parameters:
 
 Response: PhIP Object JSON. HTTP 200 on success.
 
+By default, GET returns the current state projection of the object with 
+an empty `history` array. The response MUST include `history_length` 
+(total event count) and `history_head` (SHA-256 hash of the most recent 
+event) so that clients can determine chain state without fetching 
+history.
+
+```json
+{
+  "phip_id": "phip://droyd.com/units/047",
+  "object_type": "system",
+  "state": "deployed",
+  "history_length": 847,
+  "history_head": "sha256:a4f2c8...",
+  "history": [],
+  "identity": { ... },
+  "relations": [ ... ],
+  "attributes": { ... }
+}
+```
+
+The `history_head` value is what a client MUST use as `previous_hash` 
+when constructing a PUSH event.
+
+#### 12.2.1 History Retrieval
+
+The full event history is accessed via a sub-resource endpoint:
+
+```
+GET https://{authority}/.well-known/phip/history/{namespace}/{local-id}
+    ?limit=100&cursor=...&order=asc
+```
+
+| Parameter | Description |
+|---|---|
+| `limit` | Maximum number of events to return. Default 100, max 1000 |
+| `cursor` | Opaque pagination token from a previous response |
+| `order` | `asc` (oldest first, default) or `desc` (newest first) |
+
+Response:
+
+```json
+{
+  "phip_id": "phip://droyd.com/units/047",
+  "history_length": 847,
+  "events": [ ... ],
+  "next_cursor": "opaque-string-or-null"
+}
+```
+
+The `events` array contains event objects in the requested order. 
+`next_cursor` is `null` when there are no more events.
+
+This is not a separate protocol operation — it is a sub-resource of GET, 
+providing paginated access to the same history that the object model 
+references.
+
 ### 12.3 PUSH
 
 Append an event to an object's history.
@@ -825,14 +1095,45 @@ Append an event to an object's history.
 POST https://{authority}/.well-known/phip/push/{namespace}/{local-id}
 ```
 
-Request body: a signed event object.
+Request body: a signed event object. The event's `previous_hash` field 
+MUST match the current chain head of the target object.
 
-The resolver MUST validate: event signature, hash chain continuity, 
-lifecycle transition validity (if applicable), and capability token 
-(if cross-org).
+The resolver MUST validate, in order:
+
+1. Event structure (required fields, known event type)
+2. Event signature (resolve `key_id`, verify)
+3. Capability token (if cross-org push)
+4. Hash chain continuity (`previous_hash` matches current head)
+5. Lifecycle transition validity (if `state_transition` event)
+6. Object model constraints (relation type constraints, track validity)
+
+If validation fails at any step, the resolver MUST return the appropriate 
+error response (see Section 12.5) and MUST NOT append the event.
 
 Response: the appended event with server-assigned sequence number. 
 HTTP 201 on success.
+
+#### 12.3.1 Concurrency and Chain Conflicts
+
+The hash chain creates a serialization requirement: events MUST be 
+appended strictly sequentially. If two actors push events concurrently, 
+both will compute `previous_hash` from the same chain head. The first 
+push succeeds; the second MUST be rejected with a `CHAIN_CONFLICT` error.
+
+The rejected client MUST:
+
+1. Re-fetch the object to obtain the new `history_head`
+2. Recompute `previous_hash` using the new head
+3. Re-sign the entire event (swapping `previous_hash` alone is 
+   insufficient — the signature covers all fields)
+4. Retry the PUSH
+
+The resolver MUST NOT reorder, merge, or silently resolve concurrent 
+pushes. The linear hash chain is the authoritative ordering.
+
+Resolvers SHOULD process pushes to the same object serially to minimize 
+conflict frequency. The spec does not define a maximum retry count or 
+backoff strategy — these are client implementation concerns.
 
 ### 12.4 QUERY
 
@@ -842,26 +1143,169 @@ Find objects matching criteria within a namespace.
 POST https://{authority}/.well-known/phip/query/{namespace}
 ```
 
-Request body:
+#### 12.4.1 Query Request Format
 
 ```json
 {
-  "object_type": "component",
-  "state": "deployed",
+  "filters": {
+    "object_type": "component",
+    "state": "deployed"
+  },
   "attributes": {
     "phip:datacenter": {
-      "location": "SJC-DC4/*"
+      "rack_units": 2
     }
   },
-  "contains": "phip://nvidia.com/gpus/*",
+  "relations": {
+    "contains": "phip://nvidia.com/gpus/H100-*",
+    "located_at": "phip://google.com/locations/SJC-DC4/*"
+  },
+  "return": "ids",
   "limit": 100,
   "cursor": "..."
 }
 ```
 
-Response: paginated array of PhIP Objects or PhIP IDs.
+All predicates are implicitly AND — every specified predicate must match 
+for an object to be included in the result.
 
-[TODO: define full query predicate grammar]
+#### 12.4.2 Predicate Types
+
+**Field filters** (`filters`): equality match on top-level object fields. 
+Supported fields: `object_type`, `state`, `phip_id`. String values 
+support glob patterns using `*` as the only wildcard character.
+
+```json
+{ "filters": { "object_type": "system", "state": "deployed" } }
+```
+
+**Attribute filters** (`attributes`): equality match on values within 
+namespaced attribute schemas. The namespace must be specified. String 
+values support glob patterns.
+
+```json
+{ "attributes": { "phip:software": { "firmware": "droyd-fw-2.*" } } }
+```
+
+**Relation filters** (`relations`): match objects that have a relation 
+of the specified type whose target `phip_id` matches the given glob 
+pattern.
+
+```json
+{ "relations": { "contains": "phip://damiao.com/motors/*" } }
+```
+
+Multiple relation filters are AND — the object must have all specified 
+relations.
+
+#### 12.4.3 Glob Pattern Syntax
+
+Glob patterns use `*` as a wildcard matching zero or more characters. 
+No other wildcard characters are defined. `*` does not match across 
+the `://` scheme separator.
+
+Examples:
+- `phip://nvidia.com/gpus/*` — any GPU in Nvidia's namespace
+- `droyd-fw-2.*` — any firmware version starting with 2.
+- `*` alone matches any value
+
+Regular expressions, range queries (greater than, less than), boolean 
+combinators (OR, NOT), full-text search, aggregations, and 
+cross-namespace joins are explicitly excluded from PhIP v0.1.
+
+#### 12.4.4 Response Format
+
+The `return` field controls response content:
+
+**`"return": "ids"`** (default): returns an array of matching PhIP URIs.
+
+```json
+{
+  "matches": [
+    "phip://google.com/servers/srv-042",
+    "phip://google.com/servers/srv-043"
+  ],
+  "total": 847,
+  "next_cursor": "opaque-string-or-null"
+}
+```
+
+**`"return": "objects"`**: returns an array of full PhIP Object 
+projections (current state, no history).
+
+```json
+{
+  "matches": [
+    { "phip_id": "phip://google.com/servers/srv-042", "object_type": "system", ... },
+    { "phip_id": "phip://google.com/servers/srv-043", "object_type": "system", ... }
+  ],
+  "total": 847,
+  "next_cursor": "opaque-string-or-null"
+}
+```
+
+`total` is the total count of matching objects (MAY be approximate for 
+performance). `next_cursor` is `null` when no more results exist. 
+`limit` defaults to 100 and MUST NOT exceed 1000.
+
+#### 12.4.5 Query Scope
+
+QUERY operates within a single namespace on a single authority. 
+Cross-namespace and cross-authority queries are not supported in PhIP 
+v0.1. A client that needs to query across authorities MUST issue 
+separate QUERY requests to each authority.
+
+QUERY does not require authentication by default — it returns the same 
+objects that GET would return. Access control on QUERY results, if 
+implemented, SHOULD be consistent with access control on GET.
+
+### 12.5 Error Responses
+
+All error responses MUST use `application/json` and the following format:
+
+```json
+{
+  "error": {
+    "code": "INVALID_TRANSITION",
+    "message": "Cannot transition from 'stock' to 'disposed' on manufacturing track",
+    "details": {
+      "current_state": "stock",
+      "requested_state": "disposed",
+      "valid_transitions": ["deployed", "decommissioned", "consumed"]
+    }
+  }
+}
+```
+
+The `code` field is a machine-parseable string from the registry below. 
+The `message` field is a human-readable description. The `details` field 
+is OPTIONAL and carries error-code-specific context for debugging; its 
+structure is not normative.
+
+#### 12.5.1 Error Code Registry
+
+| Code | HTTP Status | Description |
+|---|---|---|
+| `OBJECT_NOT_FOUND` | 404 | GET or PUSH to a non-existent PhIP ID |
+| `OBJECT_EXISTS` | 409 | CREATE with a `phip_id` that is already registered |
+| `CHAIN_CONFLICT` | 409 | PUSH `previous_hash` does not match current chain head. `details` MUST include `current_head` |
+| `DUPLICATE_EVENT` | 409 | An event with this `event_id` already exists (replay protection) |
+| `TERMINAL_STATE` | 409 | Object is in a terminal state and cannot accept events |
+| `INVALID_SIGNATURE` | 401 | Event signature verification failed |
+| `KEY_NOT_FOUND` | 401 | The `key_id` in the signature could not be resolved |
+| `KEY_EXPIRED` | 401 | The signing key's validity window does not cover the event timestamp |
+| `MISSING_CAPABILITY` | 403 | Cross-org push without a capability token |
+| `INVALID_CAPABILITY` | 403 | Capability token signature invalid, expired, or scope insufficient |
+| `FOREIGN_NAMESPACE` | 403 | CREATE attempted in a namespace the caller does not own |
+| `INVALID_OBJECT` | 422 | Object model validation failed (missing required fields, unknown type) |
+| `INVALID_EVENT` | 422 | Event structure invalid (missing fields, unknown event type) |
+| `INVALID_TRANSITION` | 422 | State transition not allowed on this object type's lifecycle track. `details` SHOULD include `valid_transitions` |
+| `INVALID_TRACK` | 422 | State is not valid for this object type's lifecycle track |
+| `INVALID_RELATION` | 422 | Relation type constraint violated (e.g., `located_at` target is not a `location` or `vehicle`) |
+| `INVALID_QUERY` | 422 | Query predicate is malformed or uses unsupported features |
+
+Error responses MUST NOT be signed. They are informational, not 
+historical records. HTTPS is the integrity mechanism for error responses.
 
 ---
 
@@ -869,23 +1313,35 @@ Response: paginated array of PhIP Objects or PhIP IDs.
 
 A conformant PhIP resolver MUST:
 
-- Implement CREATE, GET, PUSH, and QUERY operations
+- Implement CREATE, GET (including history sub-resource), PUSH, and 
+  QUERY operations
 - Assign and maintain persistent PhIP URIs
-- Validate object model structure on write
-- Enforce the correct lifecycle track (manufacturing or operational) per object type
+- Validate object model structure on write, including relation metadata
+- Enforce the correct lifecycle track (manufacturing or operational) per 
+  object type
 - Enforce lifecycle transition rules within the assigned track
 - Validate process event inputs/outputs and enforce `consumed` transitions
 - Validate lot split/merge operations
-- Verify event signatures before appending
+- Verify event signatures against resolved key resources (Section 11.2)
+- Validate key validity windows (`not_before` / `not_after`) against 
+  event timestamps
 - Maintain hash chain integrity per RFC 8785 (JCS) serialization
-- Verify and enforce capability tokens for cross-org writes
-- Return objects in terminal states (`disposed`, `consumed`, `archived`) on GET
+- Return `CHAIN_CONFLICT` (409) on concurrent push conflicts with 
+  `current_head` in error details (Section 12.3.1)
+- Verify and enforce capability tokens for cross-org writes, including 
+  scope validation (Section 11.3)
+- Return standard error responses per Section 12.5
+- Return objects in terminal states (`disposed`, `consumed`, `archived`) 
+  on GET
+- Return `history_length` and `history_head` on GET responses
+- Support cursor pagination on history retrieval and QUERY responses
 
 A conformant PhIP resolver SHOULD:
 
 - Support the `depth` parameter on GET
 - Support the `at` parameter on GET for point-in-time queries
 - Validate condition values against the standard vocabulary
+- Support `Cache-Control` headers on key resource responses
 - Publish its supported schema namespaces
 
 [TODO: define a conformance test suite reference]
@@ -925,12 +1381,11 @@ This document requests registration of the `phip` URI scheme.
 
 - RFC 2119 — Key words for use in RFCs
 - RFC 3986 — Uniform Resource Identifier (URI): Generic Syntax
+- RFC 7517 — JSON Web Key (JWK)
 - RFC 8037 — CFRG Elliptic Curves for JOSE (Ed25519)
 - RFC 8785 — JSON Canonicalization Scheme (JCS)
 
 ### Informative
-
-- RFC 7517 — JSON Web Key (JWK)
 - W3C Verifiable Credentials Data Model
 - SPIFFE Verifiable Identity Document specification
 - ActivityPub W3C Recommendation
@@ -958,23 +1413,18 @@ Issues identified through scenario stress-testing and systematic review.
 | ~~A39~~ | Operational track missing pre-active state | Added `planned` state. See Section 9.3 |
 | ~~A40~~ | Foreign namespace CREATE restriction | Stated explicitly in Section 12.1 |
 | ~~A41~~ | Hash chain verification strictness | MUST on first untrusted retrieval, MAY cache. See Section 10.3 |
+| ~~A8~~ | Public key resource format | JWK-based key objects on operational lifecycle track with `not_before`/`not_after` validity, bootstrap key pattern, cache guidance. See Section 11.2 |
+| ~~A9~~ | Query predicate grammar | Field, attribute, and relation filters with glob syntax, two return modes, cursor pagination. See Section 12.4 |
+| ~~A11~~ | Capability token mechanics | `PhIP-Capability` HTTP header, four scope levels, token format with verification steps, short-lived tokens with expiry-based revocation. See Section 11.3 |
+| ~~A24~~ | Concurrency | Optimistic locking: PUSH requires `previous_hash` match, 409 `CHAIN_CONFLICT` on mismatch, client re-fetches/re-signs/retries. See Section 12.3.1 |
+| ~~A25~~ | Error response format | Standard error envelope with 17 error codes and HTTP status mappings. See Section 12.5 |
+| ~~A31~~ | Relation metadata | Optional flat `metadata` object on relations, carried through `relation_added` event payloads. See Section 7.2 |
+| ~~A32~~ | History pagination | GET returns state projection with `history_length`/`history_head`; separate `/history/` sub-resource with cursor pagination. See Section 12.2.1 |
 
-### A.2 Must Resolve Before Reference Implementation
+### A.2 Open Issues — Post-v0.1
 
-These issues block writing a conformant reference resolver. Without 
-resolution, an implementer cannot know what to build.
-
-| # | Issue | Section |
-|---|---|---|
-| A8 | **Public key resource format.** Key resources need validity windows (`not_before`, `not_after`) to support key rotation and historical verification. Without this, event signing (Section 11.1) cannot be implemented. | 11.2 |
-| A9 | **Query predicate grammar.** QUERY is a required operation but has no defined request format beyond the example. A reference implementation cannot validate query requests. | 12.4 |
-| A11 | **Capability token mechanics.** Token presentation mechanism (HTTP header? request body?), scope vocabulary beyond `push_events`, and issuance/revocation protocol. Without this, cross-org writes cannot be implemented. | 11.3 |
-| A24 | **Concurrency.** Two actors pushing events simultaneously compute `previous_hash` from the same chain head. One succeeds, the other's hash breaks. The resolver needs a defined conflict resolution strategy (optimistic locking, sequence numbers, retry protocol). | 10 |
-| A25 | **Error response format.** No standard error payloads, error codes, or HTTP status code mapping for validation failures (bad signature, invalid transition, broken chain, duplicate ID). Every protocol operation needs defined error responses. | 12 |
-| A31 | **Relation metadata.** Relations are bare (type, phip_id) tuples. The reference implementation's datacenter example needs positional data (rack unit, slot number). Without metadata on relations, the most basic use cases are underspecified. | 7 |
-| A32 | **History pagination.** GET returns full object including history. The reference implementation will hit this immediately on any non-trivial test. Need pagination or a separate history endpoint. | 12.2 |
-
-### A.3 Can Defer to Post-v0.1
+No issues currently block the reference implementation. The following 
+are real issues to address in subsequent spec revisions or appendices.
 
 These are real issues but do not block the reference implementation. 
 They can be addressed in subsequent spec revisions or appendices.
