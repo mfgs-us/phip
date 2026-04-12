@@ -1,0 +1,19 @@
+{
+  "name": "phip-reference-resolver",
+  "version": "0.1.0-draft",
+  "private": true,
+  "description": "Reference implementation of the PhIP Core Specification v0.1.0-draft. Intra-namespace in-memory resolver covering CREATE, GET, PUSH, QUERY with JCS canonicalization, Ed25519 signing, hash-chain verification, lifecycle track enforcement, and schema validation.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node test/smoke.js"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "canonicalize": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

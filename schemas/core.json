@@ -1,0 +1,536 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mfgs-us/phip/schemas/core.json",
+  "title": "PhIP Core Object",
+  "description": "JSON Schema for a PhIP (Physical Information Protocol) Object as defined in PhIP Core Specification v0.1.0-draft. Validates object model structure, lifecycle state vocabularies (per object type), relation vocabulary, and event log structure. Cross-event constraints — hash chain continuity, lifecycle transition validity across history, signature cryptographic verification, capability token verification — are resolver-enforced and outside the scope of this schema.",
+
+  "type": "object",
+  "required": ["phip_id", "object_type", "state", "history"],
+  "properties": {
+    "phip_id": { "$ref": "#/$defs/phipUri" },
+    "object_type": { "$ref": "#/$defs/objectType" },
+    "state": { "type": "string" },
+    "history": {
+      "type": "array",
+      "description": "Append-only event log. MUST NOT be null or absent. MAY be empty for newly created objects.",
+      "items": { "$ref": "#/$defs/event" }
+    },
+    "identity": { "$ref": "#/$defs/identity" },
+    "relations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/relation" }
+    },
+    "attributes": { "$ref": "#/$defs/attributes" }
+  },
+
+  "allOf": [
+    {
+      "description": "Manufacturing track: material, component, assembly, system, lot use the manufacturing-track state vocabulary.",
+      "if": {
+        "required": ["object_type"],
+        "properties": {
+          "object_type": {
+            "enum": ["material", "component", "assembly", "system", "lot"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "state": { "$ref": "#/$defs/manufacturingState" }
+        }
+      }
+    },
+    {
+      "description": "Operational track: actor, location, vehicle use the operational-track state vocabulary.",
+      "if": {
+        "required": ["object_type"],
+        "properties": {
+          "object_type": {
+            "enum": ["actor", "location", "vehicle"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "state": { "$ref": "#/$defs/operationalState" }
+        }
+      }
+    }
+  ],
+
+  "$defs": {
+
+    "phipUri": {
+      "type": "string",
+      "description": "PhIP URI of the form phip://{authority}/{namespace}/{local-id}, where local-id MAY contain additional / segments for sub-object addressing.",
+      "pattern": "^phip://[A-Za-z0-9.-]+/[A-Za-z0-9._~%-]+(?:/[A-Za-z0-9._~%-]+)+$"
+    },
+
+    "objectType": {
+      "type": "string",
+      "description": "Controlled vocabulary of object types. Custom types are NOT permitted in v0.1.",
+      "enum": [
+        "material",
+        "component",
+        "assembly",
+        "system",
+        "location",
+        "vehicle",
+        "lot",
+        "actor"
+      ]
+    },
+
+    "manufacturingState": {
+      "type": "string",
+      "description": "States for the manufacturing lifecycle track. Used by material, component, assembly, system, and lot. 'consumed' and 'disposed' are terminal.",
+      "enum": [
+        "concept",
+        "design",
+        "prototype",
+        "qualified",
+        "stock",
+        "deployed",
+        "maintained",
+        "decommissioned",
+        "consumed",
+        "disposed"
+      ]
+    },
+
+    "operationalState": {
+      "type": "string",
+      "description": "States for the operational lifecycle track. Used by actor, location, and vehicle. 'archived' is terminal.",
+      "enum": [
+        "planned",
+        "active",
+        "inactive",
+        "archived"
+      ]
+    },
+
+    "manufacturingTransitions": {
+      "description": "Reference enumeration of valid manufacturing-track state transitions. Encoded here for resolver use; JSON Schema cannot directly enforce transitions across history events. Each pair is [from, to].",
+      "type": "array",
+      "const": [
+        ["concept", "design"],
+        ["design", "prototype"],
+        ["design", "qualified"],
+        ["prototype", "design"],
+        ["prototype", "qualified"],
+        ["qualified", "stock"],
+        ["qualified", "consumed"],
+        ["stock", "deployed"],
+        ["stock", "decommissioned"],
+        ["stock", "consumed"],
+        ["deployed", "maintained"],
+        ["deployed", "decommissioned"],
+        ["maintained", "deployed"],
+        ["maintained", "decommissioned"],
+        ["decommissioned", "consumed"],
+        ["decommissioned", "disposed"]
+      ]
+    },
+
+    "operationalTransitions": {
+      "description": "Reference enumeration of valid operational-track state transitions. Encoded here for resolver use.",
+      "type": "array",
+      "const": [
+        ["planned", "active"],
+        ["planned", "archived"],
+        ["active", "inactive"],
+        ["active", "archived"],
+        ["inactive", "active"],
+        ["inactive", "archived"]
+      ]
+    },
+
+    "identity": {
+      "type": "object",
+      "description": "Human-meaningful identifiers. Informational only — MUST NOT be used as the primary identifier in place of phip_id. All listed fields are optional and the object is open for additional fields.",
+      "properties": {
+        "serial": { "type": "string" },
+        "part_number": { "type": "string" },
+        "manufacturer": { "type": "string" },
+        "revision": { "type": "string" },
+        "lot": { "type": "string" }
+      }
+    },
+
+    "relation": {
+      "type": "object",
+      "required": ["type", "phip_id"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "$ref": "#/$defs/relationType" },
+        "phip_id": { "$ref": "#/$defs/phipUri" },
+        "metadata": { "$ref": "#/$defs/relationMetadata" }
+      }
+    },
+
+    "relationType": {
+      "description": "Either a core relation type from the controlled vocabulary, or a namespaced custom relation type. Bare unrecognized relation types MUST be rejected.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "contains",
+            "contained_in",
+            "connected_to",
+            "located_at",
+            "derived_from",
+            "replaces",
+            "replaced_by",
+            "instance_of",
+            "manufactured_by"
+          ]
+        },
+        {
+          "type": "string",
+          "description": "Custom namespaced relation type. MUST start with 'phip:' (reserved for future core relations) or 'org:{domain}:'.",
+          "pattern": "^(phip|org):[A-Za-z0-9.\\-]+(:[A-Za-z0-9_\\-]+)+$"
+        }
+      ]
+    },
+
+    "relationMetadata": {
+      "type": "object",
+      "description": "Optional flat object of positional, structural, or qualifying information about the relation. Content is domain-specific; PhIP defines no required metadata fields. Common keys include slot, position, orientation, port, rack_unit. Values SHOULD be JSON primitives.",
+      "additionalProperties": {
+        "type": ["string", "number", "boolean", "null"]
+      }
+    },
+
+    "attributes": {
+      "type": "object",
+      "description": "Namespaced schema attributes. Keys MUST be namespace strings ('phip:*' for core namespaces or 'org:{domain}:*' for organization-defined namespaces). Values MUST be objects. Per-namespace content validation is delegated to namespace-specific schemas (e.g. mechanical.json, datacenter.json) and is intentionally not enforced here.",
+      "patternProperties": {
+        "^phip:[a-z][a-z0-9_\\-]*$": { "type": "object" },
+        "^org:[A-Za-z0-9.\\-]+(:[A-Za-z0-9_\\-]+)+$": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+
+    "event": {
+      "type": "object",
+      "required": [
+        "event_id",
+        "phip_id",
+        "type",
+        "timestamp",
+        "actor",
+        "previous_hash",
+        "signature"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "event_id": { "$ref": "#/$defs/eventId" },
+        "phip_id": { "$ref": "#/$defs/phipUri" },
+        "type": { "$ref": "#/$defs/eventType" },
+        "timestamp": { "$ref": "#/$defs/iso8601" },
+        "actor": { "$ref": "#/$defs/phipUri" },
+        "previous_hash": { "$ref": "#/$defs/previousHash" },
+        "payload": { "type": "object" },
+        "signature": { "$ref": "#/$defs/signature" }
+      },
+
+      "allOf": [
+        {
+          "description": "created event: payload MUST include object_type and state. The created event is always the genesis event of the object's hash chain.",
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "const": "created" } }
+          },
+          "then": {
+            "required": ["payload"],
+            "properties": {
+              "previous_hash": { "const": "genesis" },
+              "payload": {
+                "type": "object",
+                "required": ["object_type", "state"],
+                "properties": {
+                  "object_type": { "$ref": "#/$defs/objectType" },
+                  "state": { "type": "string" },
+                  "identity": { "$ref": "#/$defs/identity" },
+                  "relations": {
+                    "type": "array",
+                    "items": { "$ref": "#/$defs/relation" }
+                  },
+                  "attributes": { "$ref": "#/$defs/attributes" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "description": "state_transition event: payload MUST include 'from' and 'to' state names.",
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "const": "state_transition" } }
+          },
+          "then": {
+            "required": ["payload"],
+            "properties": {
+              "payload": {
+                "type": "object",
+                "required": ["from", "to"],
+                "properties": {
+                  "from": { "type": "string" },
+                  "to": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "description": "software_update event: payload MUST include 'from' and 'to' version identifiers.",
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "const": "software_update" } }
+          },
+          "then": {
+            "required": ["payload"],
+            "properties": {
+              "payload": {
+                "type": "object",
+                "required": ["from", "to"],
+                "properties": {
+                  "from": { "type": "string" },
+                  "to": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "description": "attribute_update event: payload MUST include the namespace being updated and the field updates.",
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "const": "attribute_update" } }
+          },
+          "then": {
+            "required": ["payload"],
+            "properties": {
+              "payload": {
+                "type": "object",
+                "required": ["namespace", "updates"],
+                "properties": {
+                  "namespace": {
+                    "type": "string",
+                    "pattern": "^(phip:[a-z][a-z0-9_\\-]*|org:[A-Za-z0-9.\\-]+(:[A-Za-z0-9_\\-]+)+)$"
+                  },
+                  "updates": { "type": "object" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "description": "relation_added event: payload MUST include the relation being added (with type, phip_id, and any metadata).",
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "const": "relation_added" } }
+          },
+          "then": {
+            "required": ["payload"],
+            "properties": {
+              "payload": {
+                "type": "object",
+                "required": ["relation"],
+                "properties": {
+                  "relation": { "$ref": "#/$defs/relation" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "description": "relation_removed event: payload MUST include the relation being removed.",
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "const": "relation_removed" } }
+          },
+          "then": {
+            "required": ["payload"],
+            "properties": {
+              "payload": {
+                "type": "object",
+                "required": ["relation"],
+                "properties": {
+                  "relation": { "$ref": "#/$defs/relation" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "description": "process event: payload MUST describe the transformation type, inputs, and outputs. Inputs MAY be marked consumed; outputs MAY carry yield_fraction.",
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "const": "process" } }
+          },
+          "then": {
+            "required": ["payload"],
+            "properties": {
+              "payload": {
+                "type": "object",
+                "required": ["process_type", "inputs", "outputs"],
+                "properties": {
+                  "process_type": { "type": "string" },
+                  "inputs": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "required": ["phip_id"],
+                      "properties": {
+                        "phip_id": { "$ref": "#/$defs/phipUri" },
+                        "consumed": { "type": "boolean" }
+                      }
+                    }
+                  },
+                  "outputs": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "required": ["phip_id"],
+                      "properties": {
+                        "phip_id": { "$ref": "#/$defs/phipUri" },
+                        "yield_fraction": {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 1
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "description": "lot_split event: payload MUST list the resulting lots produced by the split.",
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "const": "lot_split" } }
+          },
+          "then": {
+            "required": ["payload"],
+            "properties": {
+              "payload": {
+                "type": "object",
+                "required": ["resulting_lots"],
+                "properties": {
+                  "reason": { "type": "string" },
+                  "resulting_lots": {
+                    "type": "array",
+                    "minItems": 2,
+                    "items": {
+                      "type": "object",
+                      "required": ["phip_id"],
+                      "properties": {
+                        "phip_id": { "$ref": "#/$defs/phipUri" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "description": "lot_merge event: payload MUST list the source lots that were merged.",
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "const": "lot_merge" } }
+          },
+          "then": {
+            "required": ["payload"],
+            "properties": {
+              "payload": {
+                "type": "object",
+                "required": ["source_lots"],
+                "properties": {
+                  "reason": { "type": "string" },
+                  "source_lots": {
+                    "type": "array",
+                    "minItems": 2,
+                    "items": {
+                      "type": "object",
+                      "required": ["phip_id"],
+                      "properties": {
+                        "phip_id": { "$ref": "#/$defs/phipUri" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+
+    "eventType": {
+      "type": "string",
+      "enum": [
+        "created",
+        "state_transition",
+        "attribute_update",
+        "relation_added",
+        "relation_removed",
+        "software_update",
+        "measurement",
+        "process",
+        "lot_split",
+        "lot_merge",
+        "note"
+      ]
+    },
+
+    "eventId": {
+      "type": "string",
+      "description": "Unique identifier for an event. Spec specifies UUID; an optional human-readable prefix (e.g. 'evt-') is permitted before the UUID for debugging purposes.",
+      "pattern": "^([A-Za-z][A-Za-z0-9_-]*-)?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    },
+
+    "iso8601": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 / RFC 3339 timestamp. MUST include a timezone designator (Z or numeric offset).",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+\\-]\\d{2}:\\d{2})$"
+    },
+
+    "previousHash": {
+      "description": "Hash of the preceding event in the chain, computed as SHA-256 over the JCS-serialized full preceding event. The first event in any history MUST set this to the literal string 'genesis'.",
+      "oneOf": [
+        { "type": "string", "const": "genesis" },
+        {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      ]
+    },
+
+    "signature": {
+      "type": "object",
+      "description": "Detached event signature. Computed over the canonical JSON serialization (RFC 8785 / JCS) of the event with the signature field excluded.",
+      "required": ["algorithm", "key_id", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "Ed25519"
+        },
+        "key_id": { "$ref": "#/$defs/phipUri" },
+        "value": {
+          "type": "string",
+          "description": "Signature bytes encoded as base64url. The literal 'base64url:' prefix shown in spec examples is permitted but not required.",
+          "pattern": "^(base64url:)?[A-Za-z0-9_\\-]+={0,2}$"
+        }
+      }
+    }
+  }
+}
