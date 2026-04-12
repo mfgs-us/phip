@@ -76,6 +76,10 @@ class Store {
       throw new PhipError("DUPLICATE_EVENT", "Event ID already seen");
     }
 
+    // Signature verification — step 2 per Section 12.3 validation order.
+    // Must come before lifecycle/type checks below.
+    this._verifySignature(event);
+
     const { object_type, state } = event.payload;
     if (getTrack(object_type) === null) {
       throw new PhipError(
@@ -94,8 +98,6 @@ class Store {
         { object_type, state, track: getTrack(object_type) },
       );
     }
-
-    this._verifySignature(event);
 
     // Build the initial projected record from the created event payload.
     const record = {
@@ -142,6 +144,22 @@ class Store {
       throw new PhipError("DUPLICATE_EVENT", "Event ID already seen");
     }
 
+    // Signature verification — step 2 per Section 12.3 validation order.
+    this._verifySignature(event);
+
+    // Step 3: capability token (skipped — v0 is intra-namespace only).
+
+    // Step 4: hash chain continuity.
+    const currentHead = hashEvent(slot.history[slot.history.length - 1]);
+    if (event.previous_hash !== currentHead) {
+      throw new PhipError(
+        "CHAIN_CONFLICT",
+        "previous_hash does not match current chain head",
+        { current_head: currentHead, supplied: event.previous_hash },
+      );
+    }
+
+    // Step 5: lifecycle transition validity.
     if (!acceptsEventInTerminal(slot.record.object_type, slot.record.state, event.type)) {
       throw new PhipError(
         "TERMINAL_STATE",
@@ -154,19 +172,7 @@ class Store {
       );
     }
 
-    // Hash chain continuity: previous_hash MUST match current head.
-    const currentHead = hashEvent(slot.history[slot.history.length - 1]);
-    if (event.previous_hash !== currentHead) {
-      throw new PhipError(
-        "CHAIN_CONFLICT",
-        "previous_hash does not match current chain head",
-        { current_head: currentHead, supplied: event.previous_hash },
-      );
-    }
-
-    // Signature verification before anything that mutates state.
-    this._verifySignature(event);
-
+    // Step 6: object model constraints (relation type, track validity).
     // Compute the next record projection by applying the event. This also
     // runs lifecycle/type/relation validation on the result.
     const nextRecord = this._applyEventToRecord(slot.record, event);
@@ -195,7 +201,7 @@ class Store {
     if (limit > 1000) limit = 1000;
     const ordered =
       order === "desc" ? [...slot.history].reverse() : slot.history;
-    const start = cursor ? parseInt(cursor, 10) : 0;
+    const start = Math.max(0, cursor ? parseInt(cursor, 10) || 0 : 0);
     const end = Math.min(start + limit, ordered.length);
     const events = ordered.slice(start, end);
     const nextCursor = end < ordered.length ? String(end) : null;
@@ -217,7 +223,7 @@ class Store {
       if (!this._matchRelations(r, relations)) continue;
       matches.push(this._project(r.phip_id));
     }
-    const start = cursor ? parseInt(cursor, 10) : 0;
+    const start = Math.max(0, cursor ? parseInt(cursor, 10) || 0 : 0);
     const page = matches.slice(start, start + limit);
     const nextCursor = start + limit < matches.length ? String(start + limit) : null;
     return {

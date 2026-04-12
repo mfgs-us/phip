@@ -375,6 +375,10 @@ so that it is part of the signed event chain:
 }
 ```
 
+A `relation_removed` event payload uses the same structure — the 
+`relation` field identifies the relation being removed by `type` and 
+`phip_id`. The `metadata` field MAY be omitted in removal payloads.
+
 Relation metadata is not namespaced (unlike object attributes) because 
 it carries simple positional or structural data, not rich domain schemas.
 
@@ -596,6 +600,11 @@ serialization of the preceding event including all of its fields
 (`event_id`, `phip_id`, `type`, `timestamp`, `actor`, `previous_hash`, 
 `payload`, and `signature`). No fields are excluded.
 
+The `previous_hash` value MUST be encoded as the string `sha256:` 
+followed by the lowercase hexadecimal representation of the 32-byte 
+SHA-256 digest (64 hex characters). Example: 
+`sha256:a4f2c8e1...` (truncated).
+
 The first event in a history (the `created` event) MUST set 
 `previous_hash` to the string `"genesis"`.
 
@@ -683,6 +692,22 @@ original lot transitions to `consumed`. New lots are created with
 **Lot Merge:** A `lot_merge` event is pushed to the resulting lot. Source 
 lots transition to `consumed`. The resulting lot has `derived_from` relations 
 pointing to all sources.
+
+```json
+{
+  "type": "lot_merge",
+  "payload": {
+    "reason": "consolidation",
+    "source_lots": [
+      { "phip_id": "phip://farmco.com/lots/arabica-LOT-0099-A" },
+      { "phip_id": "phip://farmco.com/lots/arabica-LOT-0099-B" }
+    ]
+  }
+}
+```
+
+The `source_lots` array MUST contain at least two entries. Each source 
+lot SHOULD be transitioned to `consumed` by the pushing actor.
 
 [TODO: define whether lot splits require equal mass conservation]
 
@@ -1110,8 +1135,7 @@ The resolver MUST validate, in order:
 If validation fails at any step, the resolver MUST return the appropriate 
 error response (see Section 12.5) and MUST NOT append the event.
 
-Response: the appended event with server-assigned sequence number. 
-HTTP 201 on success.
+Response: the appended event as stored. HTTP 201 on success.
 
 #### 12.3.1 Concurrency and Chain Conflicts
 

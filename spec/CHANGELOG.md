@@ -31,6 +31,14 @@ All notable changes to the PhIP specification will be documented in this file.
 - Canonical JSON serialization specified as RFC 8785 / JCS (Section 10.3)
 
 ### Changed
+- Hash encoding format normatively specified: `sha256:` prefix followed by 
+  64 lowercase hex characters (Section 10.3)
+- `lot_merge` payload structure defined with `source_lots` array and example 
+  (Section 10.5)
+- `relation_removed` event payload structure clarified — same `relation` 
+  object as `relation_added` (Section 7.2)
+- PUSH response wording corrected: removed reference to undefined 
+  "server-assigned sequence number" (Section 12.3)
 - Hash chain definition clarified: hash computed over complete preceding event 
   including all fields (Section 10.3)
 - Protocol operations renumbered: CREATE (12.1), GET (12.2), PUSH (12.3), 

@@ -25,22 +25,28 @@ function buildPhipId(authority, namespace, localId) {
 function readJsonBody(req) {
   return new Promise((resolve, reject) => {
     let data = "";
+    let settled = false;
+    function settle(fn, val) {
+      if (settled) return;
+      settled = true;
+      fn(val);
+    }
     req.on("data", (chunk) => {
       data += chunk;
       if (data.length > 1_048_576) {
-        reject(new PhipError("INVALID_EVENT", "Request body too large"));
+        settle(reject, new PhipError("INVALID_EVENT", "Request body too large"));
         req.destroy();
       }
     });
     req.on("end", () => {
-      if (data.length === 0) return resolve({});
+      if (data.length === 0) return settle(resolve, {});
       try {
-        resolve(JSON.parse(data));
+        settle(resolve, JSON.parse(data));
       } catch (e) {
-        reject(new PhipError("INVALID_EVENT", "Request body is not valid JSON"));
+        settle(reject, new PhipError("INVALID_EVENT", "Request body is not valid JSON"));
       }
     });
-    req.on("error", reject);
+    req.on("error", (err) => settle(reject, err));
   });
 }
 
@@ -117,8 +123,8 @@ function createApp(store, { authority }) {
           throw new PhipError("OBJECT_NOT_FOUND", "Missing namespace or local-id");
         }
         const phipId = buildPhipId(authority, namespace, localId);
-        const limit = parseInt(url.searchParams.get("limit") || "100", 10);
-        const cursor = url.searchParams.get("cursor");
+        const limit = parseInt(url.searchParams.get("limit"), 10) || 100;
+        const cursor = url.searchParams.get("cursor") || null;
         const order = url.searchParams.get("order") || "asc";
         const history = store.history(phipId, { limit, cursor, order });
         return sendJson(res, 200, history);
