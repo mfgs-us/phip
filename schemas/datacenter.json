@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mfgs-us/phip/schemas/datacenter.json",
+  "title": "phip:datacenter",
+  "description": "Schema for the phip:datacenter attribute namespace. Covers rack-mount positioning, power, thermal, and network port inventory. Applicable to object types: component, assembly, system, location.",
+
+  "type": "object",
+  "properties": {
+    "rack_units": {
+      "type": "integer",
+      "description": "Height in standard rack units (1U = 44.45 mm).",
+      "minimum": 1
+    },
+    "rack_position": {
+      "type": "integer",
+      "description": "Starting rack unit position (bottom of device), numbered from 1 at the bottom of the rack.",
+      "minimum": 1
+    },
+    "rack_side": {
+      "type": "string",
+      "description": "Which side of the rack the device faces.",
+      "enum": ["front", "rear"]
+    },
+    "power_draw_watts": {
+      "type": "number",
+      "description": "Rated or measured power draw in watts.",
+      "minimum": 0
+    },
+    "power_supply_count": {
+      "type": "integer",
+      "description": "Number of installed power supply units.",
+      "minimum": 0
+    },
+    "power_supply_redundancy": {
+      "type": "string",
+      "description": "Power supply redundancy configuration.",
+      "enum": ["none", "n+1", "2n"]
+    },
+    "thermal_design_power_watts": {
+      "type": "number",
+      "description": "Thermal design power (TDP) in watts — maximum heat dissipation.",
+      "minimum": 0
+    },
+    "cooling": {
+      "type": "string",
+      "description": "Cooling method.",
+      "enum": ["air", "liquid", "immersion", "passive"]
+    },
+    "inlet_temp_max_c": {
+      "type": "number",
+      "description": "Maximum rated inlet air temperature in degrees Celsius."
+    },
+    "network_ports": {
+      "type": "array",
+      "description": "Inventory of network ports on this device.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Port label (e.g. 'eth0', 'mgmt', 'bmc')."
+          },
+          "speed_gbps": {
+            "type": "number",
+            "description": "Rated link speed in Gbps.",
+            "minimum": 0
+          },
+          "media": {
+            "type": "string",
+            "description": "Physical media type.",
+            "enum": ["copper", "fiber_sm", "fiber_mm", "dac", "aoc"]
+          },
+          "connector": {
+            "type": "string",
+            "description": "Connector form factor.",
+            "enum": ["rj45", "sfp", "sfp+", "sfp28", "qsfp+", "qsfp28", "qsfp-dd", "osfp"]
+          }
+        },
+        "required": ["name"]
+      }
+    }
+  },
+  "additionalProperties": true
+}

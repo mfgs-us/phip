@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mfgs-us/phip/schemas/software.json",
+  "title": "phip:software",
+  "description": "Schema for the phip:software attribute namespace. Covers firmware and software versions, configuration hashes, and OS identity. Applicable to object types: component, assembly, system.",
+
+  "type": "object",
+  "properties": {
+    "firmware": {
+      "type": "string",
+      "description": "Firmware version identifier (e.g. 'droyd-fw-2.1.4')."
+    },
+    "firmware_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Firmware build or release date (ISO 8601 date)."
+    },
+    "bios_version": {
+      "type": "string",
+      "description": "BIOS or UEFI version identifier."
+    },
+    "bmc_version": {
+      "type": "string",
+      "description": "Baseboard management controller firmware version."
+    },
+    "os": {
+      "type": "string",
+      "description": "Operating system name and version (e.g. 'Ubuntu 24.04 LTS', 'VxWorks 7')."
+    },
+    "kernel": {
+      "type": "string",
+      "description": "Kernel version string."
+    },
+    "config_hash": {
+      "type": "string",
+      "description": "Hash of the active configuration, for drift detection. Format: 'sha256:<hex>' or 'sha512:<hex>'.",
+      "pattern": "^(sha256|sha512):[0-9a-f]+$"
+    },
+    "image_hash": {
+      "type": "string",
+      "description": "Hash of the deployed firmware or OS image.",
+      "pattern": "^(sha256|sha512):[0-9a-f]+$"
+    },
+    "bootloader": {
+      "type": "string",
+      "description": "Bootloader identifier and version."
+    },
+    "drivers": {
+      "type": "object",
+      "description": "Driver versions keyed by driver name or subsystem.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": true
+}

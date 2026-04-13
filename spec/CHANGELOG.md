@@ -5,6 +5,11 @@ All notable changes to the PhIP specification will be documented in this file.
 ## [0.1.0-draft] — 2026-04-09
 
 ### Added
+- Four namespace schemas: `phip:mechanical` (dimensions, weight, material, 
+  tolerances), `phip:datacenter` (rack position, power, thermal, network 
+  ports), `phip:software` (firmware, config hashes, OS, drivers), and 
+  `phip:compliance` (condition layer, certifications, life limits, chain 
+  of custody). Validated against 27 test cases.
 - Initial draft of PhIP Core Specification
 - URI scheme definition (Section 4)
 - Object model with four required fields (Section 5)

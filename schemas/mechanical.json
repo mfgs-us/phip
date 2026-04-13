@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mfgs-us/phip/schemas/mechanical.json",
+  "title": "phip:mechanical",
+  "description": "Schema for the phip:mechanical attribute namespace. Covers physical dimensions, weight, material composition, and dimensional tolerances. Applicable to object types: material, component, assembly, system.",
+
+  "type": "object",
+  "properties": {
+    "length_mm": {
+      "type": "number",
+      "description": "Length in millimeters.",
+      "exclusiveMinimum": 0
+    },
+    "width_mm": {
+      "type": "number",
+      "description": "Width in millimeters.",
+      "exclusiveMinimum": 0
+    },
+    "height_mm": {
+      "type": "number",
+      "description": "Height in millimeters.",
+      "exclusiveMinimum": 0
+    },
+    "weight_kg": {
+      "type": "number",
+      "description": "Weight in kilograms.",
+      "exclusiveMinimum": 0
+    },
+    "material": {
+      "type": "string",
+      "description": "Primary material name or alloy designation (e.g. '6061-T6', 'FR-4', 'AISI 304')."
+    },
+    "material_class": {
+      "type": "string",
+      "description": "Broad material classification.",
+      "enum": [
+        "metal",
+        "polymer",
+        "ceramic",
+        "composite",
+        "semiconductor",
+        "glass",
+        "organic",
+        "other"
+      ]
+    },
+    "finish": {
+      "type": "string",
+      "description": "Surface finish or coating (e.g. 'anodized', 'powder-coat', 'bare')."
+    },
+    "color": {
+      "type": "string",
+      "description": "Human-readable color name or hex code."
+    },
+    "tolerances": {
+      "type": "object",
+      "description": "Dimensional tolerances keyed by dimension name.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "nominal_mm": { "type": "number" },
+          "upper_mm": { "type": "number" },
+          "lower_mm": { "type": "number" }
+        },
+        "required": ["nominal_mm"]
+      }
+    }
+  },
+  "additionalProperties": true
+}
