@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mfgs-us/phip/schemas/compliance.json",
+  "title": "phip:compliance",
+  "description": "Schema for the phip:compliance attribute namespace. Covers the condition layer (Section 9.4), certifications, life limits, and chain of custody metadata. Applicable to all object types on the manufacturing track.",
+
+  "type": "object",
+  "properties": {
+    "condition": {
+      "type": "string",
+      "description": "Fitness-for-purpose assessment, orthogonal to lifecycle state. An object can be 'deployed' but 'condemned', or 'stock' but 'degraded'.",
+      "enum": ["serviceable", "degraded", "condemned", "quarantined"]
+    },
+    "condition_reason": {
+      "type": "string",
+      "description": "Human-readable reason for the current condition (e.g. 'temperature_exceedance', 'impact_damage', 'scheduled_inspection')."
+    },
+    "condition_set_by": {
+      "type": "string",
+      "description": "PhIP URI of the actor who set the condition.",
+      "pattern": "^phip://[A-Za-z0-9.-]+/[A-Za-z0-9._~%-]+(?:/[A-Za-z0-9._~%-]+)+$"
+    },
+    "condition_timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of when the condition was assessed."
+    },
+    "certifications": {
+      "type": "array",
+      "description": "List of certifications or regulatory approvals held by this object.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "standard": {
+            "type": "string",
+            "description": "Certification standard (e.g. 'ISO 9001', 'UL 60950', 'FAA PMA', 'CE')."
+          },
+          "certificate_id": {
+            "type": "string",
+            "description": "Certificate or approval number."
+          },
+          "issued_by": {
+            "type": "string",
+            "description": "Certifying body name."
+          },
+          "issued_date": {
+            "type": "string",
+            "format": "date",
+            "description": "Date the certification was issued."
+          },
+          "expires_date": {
+            "type": "string",
+            "format": "date",
+            "description": "Date the certification expires, if applicable."
+          },
+          "status": {
+            "type": "string",
+            "enum": ["valid", "expired", "revoked", "suspended"]
+          }
+        },
+        "required": ["standard"]
+      }
+    },
+    "life_limit_hours": {
+      "type": "number",
+      "description": "Maximum operational hours before mandatory replacement or overhaul.",
+      "exclusiveMinimum": 0
+    },
+    "life_limit_cycles": {
+      "type": "integer",
+      "description": "Maximum operational cycles (e.g. pressurization cycles, thermal cycles) before mandatory action.",
+      "exclusiveMinimum": 0
+    },
+    "hours_since_new": {
+      "type": "number",
+      "description": "Total operational hours accumulated since manufacture.",
+      "minimum": 0
+    },
+    "cycles_since_new": {
+      "type": "integer",
+      "description": "Total operational cycles accumulated since manufacture.",
+      "minimum": 0
+    },
+    "hours_since_overhaul": {
+      "type": "number",
+      "description": "Operational hours accumulated since last overhaul.",
+      "minimum": 0
+    },
+    "next_inspection_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Date of next scheduled inspection or maintenance action."
+    },
+    "chain_of_custody": {
+      "type": "array",
+      "description": "Ordered list of custodians this object has passed through. Informational — the authoritative chain is derived from the event history.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "custodian": {
+            "type": "string",
+            "description": "PhIP URI or name of the custodian."
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Start of custody period."
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time",
+            "description": "End of custody period. Null or absent if current."
+          }
+        },
+        "required": ["custodian", "from"]
+      }
+    }
+  },
+  "additionalProperties": true
+}

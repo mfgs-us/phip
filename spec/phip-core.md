@@ -421,11 +421,11 @@ namespace. This is the primary extensibility mechanism.
 
 | Namespace | Description | Status |
 |---|---|---|
-| `phip:mechanical` | Dimensions, weight, material, tolerances | [TODO] |
+| `phip:mechanical` | Dimensions, weight, material, tolerances | Defined — `schemas/mechanical.json` |
 | `phip:electrical` | Voltage, current, connector types | [TODO] |
-| `phip:software` | Firmware, software versions, config hashes | [TODO] |
-| `phip:datacenter` | Rack position, power, thermal | [TODO] |
-| `phip:compliance` | Certifications, life limits, chain of custody | [TODO] |
+| `phip:software` | Firmware, software versions, config hashes | Defined — `schemas/software.json` |
+| `phip:datacenter` | Rack position, power, thermal | Defined — `schemas/datacenter.json` |
+| `phip:compliance` | Certifications, life limits, chain of custody | Defined — `schemas/compliance.json` |
 | `phip:procurement` | PO number, supplier, lead time | [TODO] |
 
 ### 8.3 Custom Namespaces
