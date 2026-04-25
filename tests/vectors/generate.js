@@ -486,8 +486,8 @@ function expandTransitions(table) {
 writeJson("lifecycle/manufacturing.json", {
   description:
     "Manufacturing track state transitions per Section 9.2.1. Applies to " +
-    "object types: material, component, assembly, system, lot.",
-  object_types: ["material", "component", "assembly", "system", "lot"],
+    "object types: material, component, assembly, system, lot, design.",
+  object_types: ["material", "component", "assembly", "system", "lot", "design"],
   states: Object.keys(MANUFACTURING_TRANSITIONS),
   terminal_states: ["consumed", "disposed"],
   transitions: MANUFACTURING_TRANSITIONS,

@@ -26,12 +26,12 @@
 
   "allOf": [
     {
-      "description": "Manufacturing track: material, component, assembly, system, lot use the manufacturing-track state vocabulary.",
+      "description": "Manufacturing track: material, component, assembly, system, lot, design use the manufacturing-track state vocabulary.",
       "if": {
         "required": ["object_type"],
         "properties": {
           "object_type": {
-            "enum": ["material", "component", "assembly", "system", "lot"]
+            "enum": ["material", "component", "assembly", "system", "lot", "design"]
           }
         }
       },
@@ -78,13 +78,14 @@
         "location",
         "vehicle",
         "lot",
-        "actor"
+        "actor",
+        "design"
       ]
     },
 
     "manufacturingState": {
       "type": "string",
-      "description": "States for the manufacturing lifecycle track. Used by material, component, assembly, system, and lot. 'consumed' and 'disposed' are terminal.",
+      "description": "States for the manufacturing lifecycle track. Used by material, component, assembly, system, lot, and design. 'consumed' and 'disposed' are terminal.",
       "enum": [
         "concept",
         "design",
@@ -183,6 +184,8 @@
             "replaces",
             "replaced_by",
             "instance_of",
+            "supersedes",
+            "superseded_by",
             "manufactured_by"
           ]
         },
@@ -487,7 +490,8 @@
         "process",
         "lot_split",
         "lot_merge",
-        "note"
+        "note",
+        "authority_transfer"
       ]
     },
 

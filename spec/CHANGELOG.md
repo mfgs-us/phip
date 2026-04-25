@@ -123,7 +123,7 @@ All notable changes to the PhIP specification will be documented in this file.
     basic/bearer/API-key MUST NOT route restricted reads or writes.
   - **A36: Conformance levels** — §13 restructured into Full / 
     Read-Only / Mirror / Client-Only classes. New 
-    `WRITE_NOT_SUPPORTED` (405) error code. New `conformance_class` 
+    `OPERATION_NOT_SUPPORTED` (405) error code. New `conformance_class` 
     field in `/meta`.
   - **A37: Schema versioning** — new §8.4: semver MAJOR.MINOR with 
     explicit additive vs. breaking change rules, versioned `$id` 

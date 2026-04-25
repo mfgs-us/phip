@@ -45,8 +45,9 @@ Breaking changes are expected before v1.0.0.
 12. Protocol Operations
 13. Conformance
 14. Security Considerations
-15. IANA Considerations
-16. References
+15. Privacy Considerations
+16. IANA Considerations
+17. References
 Appendix A. Open Issues
 
 ---
@@ -497,8 +498,28 @@ SHOULD:
 4. Cache the delegation per `Cache-Control` headers; re-fetch on 
    `effective_from`/`expires` boundary or on cache invalidation.
 
-The same-authority redirect rule (§4.3.3) is relaxed for verified 
-delegations, by analogy to the transfer exception.
+**Delegation redirect mechanics.** The same-authority redirect rule 
+of §4.3.3 has a second exception (the first being authority transfer 
+in §4.6.4): a redirect from the parent authority to the delegate 
+authority is permitted iff it is justified by an active delegation 
+entry covering the requested namespace and prefix. The redirect 
+response MUST include a `PhIP-Delegation: <namespace>` header naming 
+the parent's namespace whose delegation justifies the cross-authority 
+hop. Clients receiving such a redirect MUST:
+
+1. Fetch the parent's `/meta` document if not already cached.
+2. Locate a `delegations` entry whose `namespace`, optional `prefix`, 
+   and `effective_from`/`expires` window cover the request.
+3. Verify the entry's `delegate_authority` matches the redirect 
+   target's host and the entry's `scope` includes the operation 
+   being attempted.
+4. If any check fails, treat the redirect as if it crossed authority 
+   boundaries without justification — abort the request and surface 
+   a transport-layer error (§4.3.3).
+
+A `PhIP-Delegation` header without a corresponding `delegations` entry 
+in the parent's `/meta` MUST be treated as if absent. Clients MUST 
+NOT follow the redirect on faith.
 
 #### 4.5.3 Writes Under Delegation
 
@@ -957,6 +978,26 @@ authority SHOULD emit an `attribute_update` event reducing
 maintain a `contains` relation to every member, since the count is 
 derivable. Authorities MAY include it anyway for query convenience.
 
+##### 6.4.1.1 Shorthand Form in Event Payloads
+
+Event payloads (`lot_split`, `lot_merge`, and ad-hoc `attribute_update`
+content) MAY use a flat shorthand for terseness: a single `quantity_<unit>`
+key carrying just the numeric value. The shorthand `quantity_kg: 12000`
+is equivalent to the structured form `quantity: { value: 12000, unit: "kg" }`.
+The mapping is purely lexical — `quantity_<unit>` SHALL be parsed as
+`{ value: <number>, unit: "<unit>" }`.
+
+The shorthand exists because lot event payloads commonly inline many 
+quantities and the structured form bloats them. Outside of event 
+payloads — including the lot's `identity.quantity` projection — the 
+structured form is the canonical representation. Resolvers projecting 
+shorthand into `identity.quantity` MUST emit the structured form.
+
+When a payload uses shorthand, all quantities in that payload MUST 
+share the same unit; mixed-unit shorthand (`quantity_kg` next to 
+`quantity_units` in the same payload) is invalid. The `loss_quantity_<unit>`
+form follows the same rule.
+
 ---
 
 ## 7. Relation Vocabulary
@@ -975,7 +1016,7 @@ PhIP Objects. Each relation is a tuple of (type, phip_id).
 | `replaces` | `replaced_by` | Temporal substitution. Subject took the place of object |
 | `instance_of` | — | Subject is a physical instance of a design. Target MUST be of type `design` (Section 6.3) |
 | `supersedes` | `superseded_by` | Subject `design` revision replaces an older `design`. Both endpoints MUST be of type `design` |
-| `manufactured_by` | — | Object MUST be of type `actor` |
+| `manufactured_by` | — | Subject was produced by the object. Object MUST be of type `actor` |
 
 ### 7.2 Relation Format
 
@@ -1692,8 +1733,6 @@ instead, since unit conversion is a transformation.
 The `source_lots` array MUST contain at least two entries. Each source 
 lot SHOULD be transitioned to `consumed` by the pushing actor.
 
-[TODO: define whether lot splits require equal mass conservation]
-
 ---
 
 ## 11. Trust Model
@@ -2084,8 +2123,16 @@ read access by attaching a `phip:access` attribute to an object.
 
 #### 11.5.1 Access Policy
 
-The `phip:access` attribute namespace defines a single field, `policy`,
-whose value is one of:
+The `phip:access` attribute namespace defines the following fields:
+
+| Field | Required | Description |
+|---|---|---|
+| `policy` | MUST | One of `public`, `authenticated`, `capability`, `private` (table below) |
+| `policy_set_by` | MAY | PhIP URI of the actor who applied the current policy. Informational; the authoritative record is the event history |
+| `policy_set_at` | MAY | ISO 8601 timestamp the current policy was applied |
+| `rationale` | MAY | Human-readable note explaining the policy choice (e.g., "customer BOM under NDA", "public regulatory disclosure") |
+
+`policy` values:
 
 | Policy | Meaning |
 |---|---|
@@ -2323,6 +2370,15 @@ appended strictly sequentially. If two actors push events concurrently,
 both will compute `previous_hash` from the same chain head. The first 
 push succeeds; the second MUST be rejected with a `CHAIN_CONFLICT` error.
 
+`CHAIN_CONFLICT` responses MUST include `current_head` in `details`, so 
+the rejected client can re-sign and retry without an additional GET. 
+The one exception is the read-access carve-out in §11.5.4: when the 
+target object is restricted and the pushing actor lacks read scope, 
+the resolver MUST suppress `current_head` and return `ACCESS_DENIED` 
+(403) instead of `CHAIN_CONFLICT` (409). The pusher must obtain read 
+scope before they can recover. §11.5.4 is the only condition under 
+which `current_head` is withheld.
+
 The rejected client MUST:
 
 1. Re-fetch the object to obtain the new `history_head`
@@ -2547,17 +2603,26 @@ Each entry in `results` corresponds positionally to the input
 | `history_head` | When status is created/appended | New chain head |
 | `error` | When status is error | Standard error envelope (§12.6) |
 
-The HTTP status code is `200 OK` if any event succeeded, `207 
-Multi-Status` if the batch contained successes and failures (RFC 
-4918 multi-status), or `400 Bad Request` if the batch envelope 
-itself is malformed (e.g., not a valid JSON object with an 
-`events` array). The batch MUST NOT return a 4xx/5xx status when 
-all member errors are per-event.
+The HTTP status code is determined by the **distribution** of per-event 
+outcomes, not by their absolute count:
+
+| Outcome | HTTP status |
+|---|---|
+| All events in the batch succeeded | `200 OK` |
+| Batch contains both successes and failures | `207 Multi-Status` (RFC 4918) |
+| Every event in the batch failed | `422 Unprocessable Content` |
+| Batch envelope itself is malformed (not a JSON object with an `events` array, or `events` exceeds the resolver's maximum) | `400 Bad Request` |
+
+The 200 / 207 / 422 cases all return the body shape above; only the 
+400 case returns a top-level error envelope (§12.6) without a 
+`results` array. The batch operation itself does not produce a 5xx 
+status when failures are per-event — 5xx is reserved for actual 
+resolver-side problems.
 
 #### 12.5.4 Batches Across Conformance Classes
 
 Read-Only and Mirror resolvers (§13.2, §13.3) MUST reject batch 
-endpoints with `405 WRITE_NOT_SUPPORTED` since they do not 
+endpoints with `405 OPERATION_NOT_SUPPORTED` since they do not 
 implement writes.
 
 ### 12.6 Error Responses
@@ -2583,13 +2648,13 @@ The `message` field is a human-readable description. The `details` field
 is OPTIONAL and carries error-code-specific context for debugging; its 
 structure is not normative.
 
-#### 12.5.1 Error Code Registry
+#### 12.6.1 Error Code Registry
 
 | Code | HTTP Status | Description |
 |---|---|---|
 | `OBJECT_NOT_FOUND` | 404 | GET or PUSH to a non-existent PhIP ID |
 | `OBJECT_EXISTS` | 409 | CREATE with a `phip_id` that is already registered |
-| `CHAIN_CONFLICT` | 409 | PUSH `previous_hash` does not match current chain head. `details` MUST include `current_head` |
+| `CHAIN_CONFLICT` | 409 | PUSH `previous_hash` does not match current chain head. `details` MUST include `current_head`, except as carved out by §11.5.4 (restricted-read access) |
 | `DUPLICATE_EVENT` | 409 | An event with this `event_id` already exists (replay protection) |
 | `TERMINAL_STATE` | 409 | Object is in a terminal state and cannot accept events |
 | `INVALID_SIGNATURE` | 401 | Event signature verification failed |
@@ -2606,7 +2671,7 @@ structure is not normative.
 | `INVALID_RELATION` | 422 | Relation type constraint violated (e.g., `located_at` target is not a `location` or `vehicle`) |
 | `DANGLING_RELATION` | 422 | A same-authority relation references a `phip_id` that does not exist (Section 7.4) |
 | `INVALID_QUERY` | 422 | Query predicate is malformed or uses unsupported features |
-| `WRITE_NOT_SUPPORTED` | 405 | Resolver does not accept writes (Read-Only or Mirror conformance class — Section 13.2/13.3) |
+| `OPERATION_NOT_SUPPORTED` | 405 | Resolver does not implement the requested operation under its declared conformance class (Section 13). Examples: writes against a Read-Only or Mirror resolver, QUERY against a Mirror resolver |
 
 Error responses MUST NOT be signed. They are informational, not 
 historical records. HTTPS is the integrity mechanism for error responses.
@@ -2756,7 +2821,8 @@ A Full resolver MUST:
   event timestamps
 - Maintain hash chain integrity per RFC 8785 (JCS) serialization
 - Return `CHAIN_CONFLICT` (409) on concurrent push conflicts with 
-  `current_head` in error details (Section 12.3.1)
+  `current_head` in error details, subject to the §11.5.4 read-access 
+  carve-out (Section 12.3.1)
 - Verify and enforce capability tokens for cross-org writes, including 
   scope validation (Section 11.3)
 - Return standard error responses per Section 12.6
@@ -2788,11 +2854,11 @@ A Read-Only resolver MUST reject CREATE and PUSH attempts with
 `405 Method Not Allowed` (HTTP-level — there is no PhIP error code 
 for this case, since the server is not refusing on protocol grounds 
 but on capability). The response body SHOULD include an error 
-envelope with code `WRITE_NOT_SUPPORTED`:
+envelope with code `OPERATION_NOT_SUPPORTED`:
 
 | Code | HTTP | Description |
 |---|---|---|
-| `WRITE_NOT_SUPPORTED` | 405 | Resolver does not accept writes (Read-Only or Mirror conformance class) |
+| `OPERATION_NOT_SUPPORTED` | 405 | Resolver does not implement the requested operation under its declared conformance class |
 
 A Read-Only resolver SHOULD obtain its data by replication from a 
 Full resolver of the same authority. The replication mechanism is 
@@ -2809,7 +2875,7 @@ records (§4.6.5). It MUST:
   (`/.well-known/phip/resolve/...`), not its own
 - Set `Cache-Control: public, immutable` and a long `max-age` 
   (≥ 1 year) on all responses
-- Decline QUERY with `405 WRITE_NOT_SUPPORTED` — query results 
+- Decline QUERY with `405 OPERATION_NOT_SUPPORTED` — query results 
   against a mirror could go out of date silently as the mirror's 
   index drifts; clients needing query MUST use the Full resolver 
   or a Read-Only replica
@@ -2830,8 +2896,11 @@ does not host objects MUST:
 - Honor the same-authority redirect policy of §4.3.3 and the 
   authority-transfer exception of §4.6.4
 
-A client-only implementation SHOULD pass `tests/vectors/self-check.js` 
-on its native runtime before being declared conformant.
+A client-only implementation SHOULD reproduce every fixture in 
+`tests/vectors/` from its native runtime before being declared 
+conformant. The HTTP suite at `tests/conformance/` does not apply 
+to client-only implementations — the conformance suite exercises 
+server endpoints, which clients do not host.
 
 ### 13.5 Cross-Class Notes
 
@@ -2842,7 +2911,7 @@ class change SHOULD be reflected in `/meta` and SHOULD trigger a
 client-side cache invalidation.
 
 A resolver MUST NOT silently downgrade: if it stops accepting 
-writes, it MUST return `405 WRITE_NOT_SUPPORTED` rather than 
+writes, it MUST return `405 OPERATION_NOT_SUPPORTED` rather than 
 appearing to accept them. Silent downgrade is a high-impact 
 failure mode that breaks chain integrity from the writer's 
 perspective.
@@ -3096,10 +3165,10 @@ Issues identified through scenario stress-testing and systematic review.
 | ~~A18~~ | Uncertainty qualifiers | New Section 5.2.1: parallel `<field>_quality` convention with `confidence`/`source`/`as_of`/`corrected_from`/`note`. Tools MUST treat qualified and unqualified fields identically for matching |
 | ~~A29~~ | connected_to bidirectional cross-org | New Section 7.3: relations are owned by their writing object; `connected_to` and `contains`/`contained_in` only enforceable on the writing side; asymmetric relations MUST NOT be treated as proof of physical state |
 | ~~A30~~ | Dangling relations | New Section 7.4: graceful degradation rules + new `DANGLING_RELATION` (422) error code for same-authority broken refs only; cross-authority targets verified lazily by readers |
-| ~~A33~~ | Batch operations | New Section 12.5: non-atomic `/objects/{ns}/batch` and `/push/{ns}/batch` endpoints with per-event results, 1000-event cap, advertised via `supported_operations` in `/meta`. Read-Only/Mirror resolvers reject with `WRITE_NOT_SUPPORTED` |
+| ~~A33~~ | Batch operations | New Section 12.5: non-atomic `/objects/{ns}/batch` and `/push/{ns}/batch` endpoints with per-event results, 1000-event cap, advertised via `supported_operations` in `/meta`. Read-Only/Mirror resolvers reject with `OPERATION_NOT_SUPPORTED` |
 | ~~A34~~ | Offline / air-gapped resolution | New Section 4.3.4: warm cache, signed PhIP bundle format (manifest + objects + history + keys), full chain verification on import, replay-on-reconnect with `CHAIN_CONFLICT` handling |
 | ~~A35~~ | HTTP authentication | New Section 12.8: PhIP-Capability is the only protocol-level auth scheme; mTLS is a transport overlay (does not replace event signatures); non-protocol endpoints free to use any scheme; basic/bearer/API-key MUST NOT route restricted reads or writes |
-| ~~A36~~ | Conformance levels | Section 13 restructured into four classes (Full / Read-Only / Mirror / Client-Only); new `WRITE_NOT_SUPPORTED` (405) error code; new `conformance_class` field in `/meta` |
+| ~~A36~~ | Conformance levels | Section 13 restructured into four classes (Full / Read-Only / Mirror / Client-Only); new `OPERATION_NOT_SUPPORTED` (405) error code; new `conformance_class` field in `/meta` |
 | ~~A37~~ | Schema versioning | New Section 8.4: semver MAJOR.MINOR with explicit additive vs. breaking change rules, versioned `$id` URLs, `version` field in schemas (all v0.1 schemas seeded at 1.0), advertise via `/meta.schema_namespaces`, 12-month minimum compatibility window |
 
 ### A.2 Open Issues — Post-v0.1

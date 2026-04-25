@@ -1,11 +1,12 @@
 {
-  "description": "Manufacturing track state transitions per Section 9.2.1. Applies to object types: material, component, assembly, system, lot.",
+  "description": "Manufacturing track state transitions per Section 9.2.1. Applies to object types: material, component, assembly, system, lot, design.",
   "object_types": [
     "material",
     "component",
     "assembly",
     "system",
-    "lot"
+    "lot",
+    "design"
   ],
   "states": [
     "concept",
