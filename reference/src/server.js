@@ -21,6 +21,7 @@ const { URL } = require("node:url");
 
 const { PhipError } = require("./errors");
 const { hashEvent } = require("./crypto");
+const { FederationClient } = require("./federation");
 
 const PROTOCOL_VERSION = "0.1.0-draft";
 const SUPPORTED_OPERATIONS = [
@@ -56,10 +57,10 @@ function buildPhipId(authority, namespace, localId) {
 //
 // Cryptographic verification of the token's signature is performed by
 // store._verifyCapabilityToken once the access check decides the token is
-// needed. Intra-authority tokens (signing key resolves locally) are fully
-// verified per §11.3.4. Tokens whose signing key lives at a foreign
-// authority are rejected with INVALID_CAPABILITY — outbound HTTPS for
-// foreign-key resolution is deferred to v0.2.
+// needed. Intra-authority tokens are verified against the local key store.
+// Tokens whose signing key lives at a foreign authority are pre-resolved
+// in `prepareCapability` (next function) via outbound HTTPS to the foreign
+// authority's `/.well-known/phip/resolve/...` endpoint.
 function parseCapabilityHeader(req) {
   const auth = req.headers && req.headers.authorization;
   if (!auth || !auth.startsWith("PhIP-Capability ")) return null;
@@ -74,6 +75,27 @@ function parseCapabilityHeader(req) {
   } catch (e) {
     return { parseError: new PhipError("INVALID_CAPABILITY", "Capability token is not valid base64url-encoded JSON") };
   }
+}
+
+// Async pre-step before any access check: if the parsed token's signing
+// key lives at a foreign authority, fetch the key via the federation
+// client. Errors are stashed on the caller as `foreignKeyError` and
+// surfaced only if the policy requires the token. Intra-authority
+// signing keys are left to the store's local resolution path.
+async function prepareCapability(caller, federation, ourAuthority) {
+  if (!caller || caller.parseError || !caller.token) return caller;
+  const keyId = caller.token.signature && caller.token.signature.key_id;
+  if (!keyId) return caller;
+  const m = /^phip:\/\/([^/]+)\//.exec(keyId);
+  if (!m) return caller;
+  const keyAuthority = m[1];
+  if (keyAuthority === ourAuthority) return caller; // local — store handles
+  try {
+    caller.resolvedForeignKey = await federation.resolveKey(keyId);
+  } catch (err) {
+    caller.foreignKeyError = err;
+  }
+  return caller;
 }
 
 function readJsonBody(req) {
@@ -194,9 +216,19 @@ function runBatch(events, handler) {
   };
 }
 
-function createApp(store, { authority }) {
+function createApp(store, {
+  authority,
+  federation,
+  delegations = [],
+  rootKey,
+  successor,
+  mirrorUrls = [],
+} = {}) {
+  // Federation client may be injected (tests pass an instance configured
+  // for HTTP localhost calls). Default: HTTPS-only client.
+  if (!federation) federation = new FederationClient();
   function buildMeta() {
-    return {
+    const meta = {
       protocol_version: PROTOCOL_VERSION,
       authority,
       namespaces: store.namespaces ? store.namespaces() : [],
@@ -204,10 +236,68 @@ function createApp(store, { authority }) {
       supported_operations: SUPPORTED_OPERATIONS,
       conformance_class: "full",
       batch_max_events: BATCH_MAX_EVENTS,
-      // Optional v0.1 fields (root_key, mirror_urls, successor, delegations)
-      // are absent — this reference does not yet implement transfer or
-      // delegation. See spec §4.5, §4.6.
     };
+    if (rootKey) meta.root_key = rootKey;
+    if (delegations && delegations.length) meta.delegations = delegations;
+    if (successor) meta.successor = successor;
+    if (mirrorUrls && mirrorUrls.length) meta.mirror_urls = mirrorUrls;
+    return meta;
+  }
+
+  // §4.6.4: a transferred namespace redirects to the successor authority.
+  // Returns the successor entry (not just a boolean) so the redirect can
+  // emit `PhIP-Transfer-Event` with the originating event id.
+  function matchTransferred(namespace) {
+    if (!successor) return null;
+    const namespaces = successor.namespaces || ["*"];
+    if (!namespaces.includes(namespace) && !namespaces.includes("*")) return null;
+    // Effective-from gate.
+    if (successor.effective_from && Date.parse(successor.effective_from) > Date.now()) {
+      return null;
+    }
+    return successor;
+  }
+
+  function transferRedirect(res, succ, originalPath) {
+    const target = `https://${succ.authority}${originalPath}`;
+    const headers = {
+      Location: target,
+      "Content-Length": "0",
+    };
+    if (succ.transfer_event_id) {
+      headers["PhIP-Transfer-Event"] = succ.transfer_event_id;
+    }
+    // 308 Permanent Redirect — preserves method and body for POST.
+    res.writeHead(308, headers);
+    res.end();
+  }
+
+  // Find a delegation entry that covers the given phip_id, namespace
+  // (and optional local-id prefix). Returns the entry, or null.
+  function matchDelegation(namespace, localId) {
+    for (const d of delegations || []) {
+      if (d.namespace !== namespace && d.namespace !== "*") continue;
+      if (d.prefix && !(localId || "").startsWith(d.prefix)) continue;
+      // Effective-from / expires window check.
+      const now = Date.now();
+      if (d.effective_from && Date.parse(d.effective_from) > now) continue;
+      if (d.expires && Date.parse(d.expires) < now) continue;
+      return d;
+    }
+    return null;
+  }
+
+  // Build a 307 redirect response pointing at the delegate's resolver,
+  // with the PhIP-Delegation header naming the namespace whose delegation
+  // justifies the cross-authority hop. (§4.5.2 mechanics.)
+  function delegateRedirect(res, delegation, originalPath) {
+    const target = `https://${delegation.delegate_authority}${originalPath}`;
+    res.writeHead(307, {
+      Location: target,
+      "PhIP-Delegation": delegation.namespace,
+      "Content-Length": "0",
+    });
+    res.end();
   }
 
   function appendBatchPath(parts) {
@@ -237,6 +327,11 @@ function createApp(store, { authority }) {
         const namespace = parts[3];
         if (!namespace) {
           throw new PhipError("INVALID_EVENT", "Missing namespace in CREATE path");
+        }
+        // §4.6: transferred namespace → permanent redirect to successor.
+        const xferC = matchTransferred(namespace);
+        if (xferC) {
+          return transferRedirect(res, xferC, req.url);
         }
 
         // Batch CREATE: /.well-known/phip/objects/{namespace}/batch
@@ -270,6 +365,12 @@ function createApp(store, { authority }) {
             "CREATE is only valid within the caller's own authority/namespace",
           );
         }
+        // §4.5.3: forward CREATEs targeting a delegated slice.
+        const cLocalId = event.phip_id.slice(("phip://" + authority + "/" + namespace + "/").length);
+        const cDelegation = matchDelegation(namespace, cLocalId);
+        if (cDelegation) {
+          return delegateRedirect(res, cDelegation, req.url);
+        }
         const obj = store.create(event);
         return sendJson(res, 201, obj);
       }
@@ -280,8 +381,16 @@ function createApp(store, { authority }) {
         if (!namespace || !localId) {
           throw new PhipError("OBJECT_NOT_FOUND", "Missing namespace or local-id");
         }
+        const xferR = matchTransferred(namespace);
+        if (xferR) {
+          return transferRedirect(res, xferR, req.url);
+        }
+        const dRes = matchDelegation(namespace, localId);
+        if (dRes) {
+          return delegateRedirect(res, dRes, req.url);
+        }
         const phipId = buildPhipId(authority, namespace, localId);
-        const caller = parseCapabilityHeader(req);
+        const caller = await prepareCapability(parseCapabilityHeader(req), federation, authority);
         const obj = store.get(phipId, caller);
         return sendJson(res, 200, obj);
       }
@@ -292,17 +401,29 @@ function createApp(store, { authority }) {
         if (!namespace || !localId) {
           throw new PhipError("OBJECT_NOT_FOUND", "Missing namespace or local-id");
         }
+        const xferH = matchTransferred(namespace);
+        if (xferH) {
+          return transferRedirect(res, xferH, req.url);
+        }
+        const dHist = matchDelegation(namespace, localId);
+        if (dHist) {
+          return delegateRedirect(res, dHist, req.url);
+        }
         const phipId = buildPhipId(authority, namespace, localId);
         const limit = parseInt(url.searchParams.get("limit"), 10) || 100;
         const cursor = url.searchParams.get("cursor") || null;
         const order = url.searchParams.get("order") || "asc";
-        const caller = parseCapabilityHeader(req);
+        const caller = await prepareCapability(parseCapabilityHeader(req), federation, authority);
         const history = store.history(phipId, { limit, cursor, order }, caller);
         return sendJson(res, 200, history);
       }
 
       if (op === "push" && req.method === "POST") {
         const namespace = parts[3];
+        const xferP = matchTransferred(namespace);
+        if (xferP) {
+          return transferRedirect(res, xferP, req.url);
+        }
 
         // Batch PUSH: /.well-known/phip/push/{namespace}/batch
         if (appendBatchPath(parts) && parts.length === 5) {
@@ -335,6 +456,10 @@ function createApp(store, { authority }) {
         if (!namespace || !localId) {
           throw new PhipError("OBJECT_NOT_FOUND", "Missing namespace or local-id");
         }
+        const dPush = matchDelegation(namespace, localId);
+        if (dPush) {
+          return delegateRedirect(res, dPush, req.url);
+        }
         const phipId = buildPhipId(authority, namespace, localId);
         const event = await readJsonBody(req);
         const appended = store.push(phipId, event);
@@ -342,8 +467,13 @@ function createApp(store, { authority }) {
       }
 
       if (op === "query" && req.method === "POST") {
+        const namespace = parts[3];
+        const xferQ = matchTransferred(namespace);
+        if (xferQ) {
+          return transferRedirect(res, xferQ, req.url);
+        }
         const query = await readJsonBody(req);
-        const caller = parseCapabilityHeader(req);
+        const caller = await prepareCapability(parseCapabilityHeader(req), federation, authority);
         const result = store.query(query, caller);
         return sendJson(res, 200, result);
       }
@@ -355,8 +485,9 @@ function createApp(store, { authority }) {
   };
 }
 
-function startServer(store, { authority, port = 0 } = {}) {
-  const app = createApp(store, { authority });
+function startServer(store, opts = {}) {
+  const { port = 0 } = opts;
+  const app = createApp(store, opts);
   const server = http.createServer(app);
   return new Promise((resolve) => {
     server.listen(port, () => {

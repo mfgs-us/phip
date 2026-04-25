@@ -704,22 +704,61 @@ class Store {
 
   // §11.3.4 step 2: verify the capability token's Ed25519 signature.
   //
-  // This is "Option C" intra-authority verification: signature.key_id is
-  // resolved against THIS resolver's local key store. If the key lives
-  // here, the signature is verified cryptographically. Tokens whose
-  // signing key lives at a foreign authority are REJECTED — full
-  // federation requires outbound HTTPS to fetch foreign keys, which is
-  // deferred to v0.2.
+  // The signing key is resolved either:
+  //   (a) locally — if signature.key_id is in this resolver's namespace
+  //   (b) by the federation client — if signature.key_id is foreign;
+  //       the server pre-fetches the JWK and stashes it on the caller as
+  //       `resolvedForeignKey`.
   //
-  // Tokens that are unsigned, malformed, or signed by a foreign or
-  // expired key all surface INVALID_CAPABILITY (403). Tokens whose
-  // signature does not match the resolved key surface
-  // INVALID_SIGNATURE (401).
-  _verifyCapabilityToken(token) {
+  // If a foreign key fetch failed, `caller.foreignKeyError` carries the
+  // reason; we surface INVALID_CAPABILITY with that detail so operators
+  // can debug the federation path.
+  _verifyCapabilityToken(token, caller) {
     if (!token || !token.signature || !token.signature.key_id || !token.signature.value) {
       throw new PhipError("INVALID_CAPABILITY", "Capability token is unsigned");
     }
     const keyId = token.signature.key_id;
+
+    // Foreign key path: server.js pre-resolved (or failed to resolve) it.
+    // Use the same `not_before`-based signing anchor as the local path
+    // (§11.2.2): tokens whose claimed validity predates the foreign key's
+    // validity window are rejected. Falls back to `now` when absent.
+    if (caller && caller.resolvedForeignKey) {
+      const signingAnchor = token.not_before || new Date().toISOString();
+      try {
+        this._checkKeyValidity(caller.resolvedForeignKey, signingAnchor);
+      } catch (e) {
+        if (e instanceof PhipError && e.code === "KEY_EXPIRED") {
+          throw new PhipError(
+            "INVALID_CAPABILITY",
+            "Foreign capability token signing key is outside its validity window",
+            { key_id: keyId, anchor: signingAnchor },
+          );
+        }
+        throw e;
+      }
+      const ok = verifyEvent(token, publicKeyFromBase64Url(caller.resolvedForeignKey.x));
+      if (!ok) {
+        throw new PhipError(
+          "INVALID_SIGNATURE",
+          "Capability token signature verification failed (foreign key)",
+        );
+      }
+      return;
+    }
+    if (caller && caller.foreignKeyError) {
+      // S8: do NOT echo the foreign authority error message into the
+      // envelope — it can leak internal hostnames or URL fragments when
+      // an attacker-controlled `key_id` triggered an SSRF probe. Surface
+      // a generic message; operators can correlate via server logs.
+      throw new PhipError(
+        "INVALID_CAPABILITY",
+        "Foreign authority key resolution failed",
+        { key_id: keyId },
+      );
+    }
+
+    // Local key path.
     let keyRecord;
     try {
       keyRecord = this._resolveKeyRecord(keyId);
@@ -736,7 +775,7 @@ class Store {
     if (!keyRecord) {
       throw new PhipError(
         "INVALID_CAPABILITY",
-        "Capability token signing key not resolvable locally — foreign-authority key resolution is deferred to v0.2",
+        "Capability token signing key not resolvable",
         { key_id: keyId },
       );
     }
@@ -811,8 +850,10 @@ class Store {
     //   5. object_filter
     //   6. scope
 
-    // Step 2: signature.
-    this._verifyCapabilityToken(token);
+    // Step 2: signature. The server has pre-resolved any foreign signing
+    // key into `caller.resolvedForeignKey`; local keys go through the
+    // store's resolver.
+    this._verifyCapabilityToken(token, caller);
 
     // Step 3: validity window.
     const now = Date.now();
