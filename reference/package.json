@@ -2,11 +2,11 @@
   "name": "phip-reference-resolver",
   "version": "0.1.0-draft",
   "private": true,
-  "description": "Reference implementation of the PhIP Core Specification v0.1.0-draft. Intra-namespace in-memory resolver covering CREATE/GET/PUSH/QUERY/history/batch and the /meta endpoint, with JCS canonicalization, Ed25519 signing, hash-chain verification, lifecycle track enforcement (including the design object type), schema validation, lot mass conservation, yield-fraction conservation, dangling-relation detection, phip:access read enforcement, and intra-authority capability token cryptographic verification. Cross-authority token verification (foreign-key resolution) and full authority-transfer mechanics are deferred to v0.2.",
+  "description": "Reference implementation of the PhIP Core Specification v0.1.0-draft. In-memory resolver covering CREATE/GET/PUSH/QUERY/history/batch and the /meta endpoint, with JCS canonicalization, Ed25519 signing, hash-chain verification, lifecycle track enforcement (including the design object type), schema validation, lot mass conservation, yield-fraction conservation, dangling-relation detection, phip:access read enforcement, capability token cryptographic verification including outbound-HTTPS foreign-authority key resolution, authority delegation with PhIP-Delegation redirects, and authority transfer with PhIP-Transfer-Event redirects. Mirror serving and operator-grade root-key ceremony tooling are out of scope.",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "test": "node test/smoke.js"
+    "test": "node test/smoke.js && node test/federation.js"
   },
   "dependencies": {
     "ajv": "^8.17.1",
