@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mfgs-us/phip/schemas/access.json",
+  "version": "1.0",
   "title": "phip:access",
   "description": "Schema for the phip:access attribute namespace. Declares the object's read access policy per Section 11.5. Absence of phip:access on an object is equivalent to policy='public'.",
 

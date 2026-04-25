@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mfgs-us/phip/schemas/compliance.json",
+  "version": "1.0",
   "title": "phip:compliance",
   "description": "Schema for the phip:compliance attribute namespace. Covers the condition layer (Section 9.4), certifications, life limits, and chain of custody metadata. Applicable to all object types on the manufacturing track.",
 

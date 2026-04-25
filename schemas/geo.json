@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mfgs-us/phip/schemas/geo.json",
+  "version": "1.0",
   "title": "phip:geo",
   "description": "Schema for the phip:geo attribute namespace. Carries geographic position, address, and route information for vehicles and mobile locations. Position values are points-in-time snapshots; the authoritative position trajectory is reconstructed from the event history of attribute_update events on the object.",
 

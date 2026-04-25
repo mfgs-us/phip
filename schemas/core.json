@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mfgs-us/phip/schemas/core.json",
+  "version": "1.0",
   "title": "PhIP Core Object",
   "description": "JSON Schema for a PhIP (Physical Information Protocol) Object as defined in PhIP Core Specification v0.1.0-draft. Validates object model structure, lifecycle state vocabularies (per object type), relation vocabulary, and event log structure. Cross-event constraints — hash chain continuity, lifecycle transition validity across history, signature cryptographic verification, capability token verification — are resolver-enforced and outside the scope of this schema.",
 

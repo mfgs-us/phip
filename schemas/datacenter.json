@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mfgs-us/phip/schemas/datacenter.json",
+  "version": "1.0",
   "title": "phip:datacenter",
   "description": "Schema for the phip:datacenter attribute namespace. Covers rack-mount positioning, power, thermal, and network port inventory. Applicable to object types: component, assembly, system, location.",
 

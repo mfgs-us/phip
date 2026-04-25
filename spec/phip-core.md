@@ -183,7 +183,7 @@ Persistence of the URI is independent of persistence of the original
 authority's DNS record or operational organization. An authority that 
 ceases operation, is acquired, or migrates to a new domain transfers 
 its records via the mechanism in Section 4.6 (Authority Transfer). 
-Section 4.3.3 redirect rules and Section 12.6 metadata `mirror_urls` 
+Section 4.3.3 redirect rules and Section 12.7 metadata `mirror_urls` 
 provide the runtime mechanics for clients to follow such transfers.
 
 ### 4.3 Resolution
@@ -214,7 +214,7 @@ URI persistence (Section 4.2).
 An authority MAY publish a metadata document at
 `/.well-known/phip/meta` describing its supported protocol version,
 namespaces, and optional capabilities. The document format is defined in
-Section 12.6. Clients SHOULD fetch this document at most once per
+Section 12.7. Clients SHOULD fetch this document at most once per
 authority per session and cache it per the HTTP response headers.
 
 #### 4.3.2 Caching
@@ -278,6 +278,88 @@ MUST use `307` or `308` so the method and body are preserved.
 Clients SHOULD limit redirect chains to five hops and treat longer
 chains as a resolver misconfiguration (surface as a transport-layer
 error, not a PhIP error envelope).
+
+#### 4.3.4 Offline and Air-Gapped Resolution
+
+Some deployments resolve PhIP URIs without an internet connection: 
+factory floors with disconnected MES networks, military and aviation 
+maintenance environments, and supply-chain audits in remote 
+locations. PhIP supports these via two mechanisms — local cache 
+warm-up and signed bundle distribution.
+
+**Local cache warm-up.** A connected client populates its cache 
+(per §4.3.2) with the objects, key resources, and `/meta` 
+documents it expects to need, then disconnects. The cached 
+projections continue to verify against their hash chains and 
+signatures with no further network access. Reads against cached 
+objects work normally; writes are queued locally and replayed when 
+connectivity returns.
+
+The on-disk format for a warm cache is implementation-defined, but 
+clients SHOULD follow these constraints to maximize reuse:
+
+- Each cached object stored as the JCS-canonical bytes of its full 
+  state projection plus the JCS bytes of every event in its 
+  history.
+- Each cached key resource stored alongside the object whose 
+  signatures depend on it.
+- The cache index is keyed by `phip_id`.
+
+**Signed bundle distribution.** When a connected reference machine 
+needs to distribute records to a wholly disconnected site, the 
+authoritative wire format is a **PhIP bundle**: a signed archive 
+of one or more objects' states and histories. Bundle format:
+
+```
+phip-bundle.tar
+├── manifest.json          // bundle metadata + signature
+├── objects/
+│   ├── {urlencoded-phip-id-1}.json    // full object projection
+│   └── ...
+├── history/
+│   ├── {urlencoded-phip-id-1}.jsonl   // events in chain order, one per line
+│   └── ...
+└── keys/
+    └── {urlencoded-key-phip-id}.json  // key resources referenced by signatures
+```
+
+The `manifest.json` MUST contain:
+
+| Field | Required | Description |
+|---|---|---|
+| `bundle_version` | MUST | `"1.0"` |
+| `created_at` | MUST | ISO 8601 timestamp the bundle was assembled |
+| `created_by` | MUST | PhIP URI of the actor producing the bundle |
+| `authority` | MUST | Source authority name |
+| `objects` | MUST | Array of bundled `phip_id`s with `history_head` per object — bundle-level integrity manifest |
+| `signature` | MUST | Ed25519 signature over the JCS canonicalization of the manifest minus this field, signed by `created_by` |
+
+A consumer importing a bundle MUST:
+
+1. Verify the manifest signature against the producer's key 
+   resource (which MAY be embedded in `keys/`).
+2. For each object, verify the full hash chain from genesis to 
+   the manifest's claimed `history_head`.
+3. Verify each event signature against the corresponding key 
+   resource.
+4. Reject the bundle on any failure; do NOT partially apply.
+
+Bundles are append-only on the consumer side: importing the same 
+bundle twice is a no-op. Importing a bundle whose chain conflicts 
+with locally-held state MUST surface a `CHAIN_CONFLICT`-style error 
+to operators rather than overwriting silently.
+
+**Replay-on-reconnect.** A disconnected client that accepts local 
+PUSH operations buffers them as a queue. On reconnect, the client 
+replays the queue against the upstream resolver in order, handling 
+`CHAIN_CONFLICT` per §12.3.1 (re-fetch, re-sign, retry). The queue 
+SHOULD be persisted across client restarts; events MUST be replayed 
+in the order they were originally signed.
+
+Bundles, warm caches, and replay queues are all client-side 
+concerns. A resolver itself does not need to know whether its 
+clients are operating online or offline — the protocol is 
+indifferent.
 
 ### 4.4 Sub-Object Addressing
 
@@ -369,7 +451,7 @@ is a permanent cession.
 #### 4.5.1 Delegation Mechanism
 
 Delegation is recorded as an entry in the authority's metadata 
-document (§12.6) under a new `delegations` field:
+document (§12.7) under a new `delegations` field:
 
 ```json
 {
@@ -584,7 +666,7 @@ authority record before following the redirect.
 
 When the source authority is unreachable (DNS expiration, server 
 shutdown), clients fall back to mirrors listed in the successor's 
-metadata document (Section 12.6 `mirror_urls`). A mirror is a 
+metadata document (Section 12.7 `mirror_urls`). A mirror is a 
 read-only host serving a frozen snapshot of the source authority's 
 records as of `effective_from` (or a later snapshot if the source 
 continued to operate post-transfer).
@@ -1101,6 +1183,150 @@ org:droyd.com:teleop
 
 Custom namespace schemas SHOULD be published at a resolvable URL for 
 interoperability.
+
+### 8.4 Schema Versioning and Evolution
+
+Schemas evolve over time as domains add fields, refine vocabularies, 
+or correct mistakes. PhIP applies semantic versioning to schemas with 
+explicit rules about which changes are additive and which are 
+breaking.
+
+#### 8.4.1 Versioning Scheme
+
+Each schema version is identified by a semver string `MAJOR.MINOR`:
+
+- `MAJOR` increments on breaking changes — anything that could cause 
+  a previously-valid attribute block to be rejected by the new 
+  schema, or that would change the interpretation of existing 
+  fields.
+- `MINOR` increments on additive changes — new optional fields, new 
+  enum values, additional documentation.
+
+Patch numbers are not used; documentation-only changes do not 
+require a version bump (the schema content is unchanged).
+
+The version is encoded in the schema's `$id`:
+
+```
+https://github.com/mfgs-us/phip/schemas/mechanical/v1.2.json
+```
+
+The unversioned URL (`schemas/mechanical.json`) MUST resolve to the 
+latest stable version. Authorities that pin a specific version 
+SHOULD use the versioned URL.
+
+A schema's top-level `version` field carries the same string for 
+in-document reference:
+
+```json
+{
+  "$id": "...mechanical/v1.2.json",
+  "version": "1.2",
+  "title": "phip:mechanical",
+  ...
+}
+```
+
+#### 8.4.2 Additive Changes (MINOR bump)
+
+The following changes MAY be made within a MAJOR version:
+
+- Add a new OPTIONAL property.
+- Add a new value to an enum (existing values keep their meaning).
+- Tighten the description of an existing property without changing 
+  its validation rules.
+- Add a new pattern alternative to a `oneOf` schema.
+- Mark a field as `deprecated` (the field still validates; consumers 
+  are notified to migrate away).
+
+Implementations validating against an older MINOR version MUST still 
+accept attribute blocks that include newer optional fields — they 
+will simply ignore unknown properties (which is consistent with the 
+default `additionalProperties: true` of all PhIP core schemas).
+
+#### 8.4.3 Breaking Changes (MAJOR bump)
+
+The following changes REQUIRE a new MAJOR version:
+
+- Remove a property.
+- Rename a property (equivalent to remove + add).
+- Tighten validation: change a property from optional to required, 
+  add a new required property, narrow a numeric range, restrict an 
+  enum.
+- Change the type of a property.
+- Change the semantic meaning of a value (even if the type and 
+  validation are unchanged).
+
+A new MAJOR version is a new schema. Both versions remain published 
+at their respective `$id` URLs; the unversioned URL points at the 
+latest, but resolvers SHOULD continue to validate against older 
+versions for objects that were created against them.
+
+Authorities migrating data between MAJOR versions SHOULD record the 
+migration as an `attribute_update` event whose payload contains the 
+rewritten data; the historical events with the old shape remain in 
+the chain (consistent with §15's privacy framing — history is 
+append-only).
+
+#### 8.4.4 Schema Resolution
+
+When validating an attribute block, a resolver follows this 
+procedure:
+
+1. If the attribute block contains a `$schema` field, validate 
+   against that exact schema URL.
+2. Otherwise, look up the namespace (`phip:mechanical`) in the 
+   resolver's schema registry and validate against the latest 
+   MINOR version of the latest MAJOR version the registry holds.
+3. A `$schema` URL whose host or version is not in the registry 
+   MUST be fetched from its `$id` URL on first use; the resolver 
+   SHOULD cache fetched schemas with TTL guidance from the `/meta` 
+   document of the schema host.
+
+#### 8.4.5 Advertising Supported Schemas
+
+A resolver's `/meta` document (§12.7) lists supported schema 
+namespaces. To advertise version coverage, the entry MAY be a 
+string (latest MAJOR.MINOR supported) or an object listing the 
+exact range:
+
+```json
+{
+  "schema_namespaces": [
+    "phip:mechanical@1.2",
+    {
+      "namespace": "phip:datacenter",
+      "min": "1.0",
+      "max": "2.1"
+    },
+    "phip:software"
+  ]
+}
+```
+
+A bare namespace string (`"phip:software"`) means "latest version 
+the resolver supports, no range constraint advertised." Clients 
+SHOULD treat it as a soft signal only and rely on `$schema` URLs in 
+attribute blocks for authoritative version selection.
+
+#### 8.4.6 Compatibility Window
+
+Authorities SHOULD support at least one MAJOR version older than 
+the current one (i.e., N and N-1) for a minimum of 12 months after 
+N is released. This gives downstream consumers time to migrate 
+their writes. After the compatibility window, a resolver MAY 
+reject `attribute_update` events that target the deprecated MAJOR 
+version with `INVALID_OBJECT` (422), but it MUST continue to 
+serve historical events written against the deprecated version 
+unchanged.
+
+#### 8.4.7 Initial Versioning
+
+The schemas published with PhIP v0.1 are version `1.0`. The 
+versioning rules above apply prospectively — future schema 
+revisions move forward from 1.0. The unversioned URLs 
+(`schemas/mechanical.json` etc.) currently resolve to v1.0; when 
+v1.1 is published, they will resolve to v1.1.
 
 ---
 
@@ -2086,7 +2312,7 @@ The resolver MUST validate, in order:
 6. Object model constraints (relation type constraints, track validity)
 
 If validation fails at any step, the resolver MUST return the appropriate 
-error response (see Section 12.5) and MUST NOT append the event.
+error response (see Section 12.6) and MUST NOT append the event.
 
 Response: the appended event as stored. HTTP 201 on success.
 
@@ -2236,7 +2462,105 @@ QUERY does not require authentication by default — it returns the same
 objects that GET would return. Access control on QUERY results, if 
 implemented, SHOULD be consistent with access control on GET.
 
-### 12.5 Error Responses
+### 12.5 Batch Operations
+
+Resolvers MAY support batched CREATE and PUSH for bulk ingestion. 
+Batch endpoints exist as siblings to the single-event endpoints:
+
+```
+POST https://{authority}/.well-known/phip/objects/{namespace}/batch
+POST https://{authority}/.well-known/phip/push/{namespace}/batch
+```
+
+A resolver that supports batch operations MUST advertise it in the 
+`/meta` document via `supported_operations` containing the values 
+`"batch_create"` and/or `"batch_push"`.
+
+#### 12.5.1 Batch Request
+
+Request body is a JSON object with an `events` array. Each entry 
+is a complete signed event identical in shape to a single-event 
+CREATE or PUSH request.
+
+```json
+{
+  "events": [
+    { "event_id": "...", "phip_id": "phip://acme.example/parts/p-001", "type": "created", ... },
+    { "event_id": "...", "phip_id": "phip://acme.example/parts/p-002", "type": "created", ... },
+    { "event_id": "...", "phip_id": "phip://acme.example/parts/p-003", "type": "created", ... }
+  ]
+}
+```
+
+The batch MUST contain at most 1000 events. Resolvers MAY enforce a 
+lower limit and MUST advertise it via 
+`/meta.batch_max_events` (a positive integer, advisory).
+
+#### 12.5.2 Batch Semantics
+
+PhIP batches are **non-atomic**. Each event in the array is 
+processed independently — there is no all-or-nothing behavior 
+across the batch. This is consistent with the cross-namespace 
+atomicity deferral in §10.4: PhIP v0.1 does not provide 
+transactional guarantees.
+
+The resolver processes events in array order. For PUSH batches 
+targeting the same `phip_id`, this matters: each event in the 
+batch sees the chain head left by the previous event in the batch 
+(if it succeeded). For CREATE batches and PUSH batches targeting 
+different `phip_id`s, ordering is not significant for correctness.
+
+If an event fails (signature verification, chain conflict, schema 
+violation, etc.), the resolver MUST:
+
+- Record the failure in the response.
+- Continue processing subsequent events in the batch (not abort).
+- NOT roll back any successfully-processed events.
+
+If a downstream client requires atomicity, it MUST submit the 
+events one at a time and handle failures itself.
+
+#### 12.5.3 Batch Response
+
+The response is `200 OK` regardless of individual event outcomes 
+(the batch operation itself succeeded — its members may not 
+have). Body:
+
+```json
+{
+  "results": [
+    { "status": "created", "phip_id": "phip://acme.example/parts/p-001", "history_head": "sha256:..." },
+    { "status": "error", "phip_id": "phip://acme.example/parts/p-002", "error": { "code": "OBJECT_EXISTS", ... } },
+    { "status": "created", "phip_id": "phip://acme.example/parts/p-003", "history_head": "sha256:..." }
+  ],
+  "summary": { "total": 3, "succeeded": 2, "failed": 1 }
+}
+```
+
+Each entry in `results` corresponds positionally to the input 
+`events` array. Entries have:
+
+| Field | Required | Description |
+|---|---|---|
+| `status` | MUST | `"created"`, `"appended"`, or `"error"` |
+| `phip_id` | MUST | Object id the event targeted (echoed from the input) |
+| `history_head` | When status is created/appended | New chain head |
+| `error` | When status is error | Standard error envelope (§12.6) |
+
+The HTTP status code is `200 OK` if any event succeeded, `207 
+Multi-Status` if the batch contained successes and failures (RFC 
+4918 multi-status), or `400 Bad Request` if the batch envelope 
+itself is malformed (e.g., not a valid JSON object with an 
+`events` array). The batch MUST NOT return a 4xx/5xx status when 
+all member errors are per-event.
+
+#### 12.5.4 Batches Across Conformance Classes
+
+Read-Only and Mirror resolvers (§13.2, §13.3) MUST reject batch 
+endpoints with `405 WRITE_NOT_SUPPORTED` since they do not 
+implement writes.
+
+### 12.6 Error Responses
 
 All error responses MUST use `application/json` and the following format:
 
@@ -2282,11 +2606,12 @@ structure is not normative.
 | `INVALID_RELATION` | 422 | Relation type constraint violated (e.g., `located_at` target is not a `location` or `vehicle`) |
 | `DANGLING_RELATION` | 422 | A same-authority relation references a `phip_id` that does not exist (Section 7.4) |
 | `INVALID_QUERY` | 422 | Query predicate is malformed or uses unsupported features |
+| `WRITE_NOT_SUPPORTED` | 405 | Resolver does not accept writes (Read-Only or Mirror conformance class — Section 13.2/13.3) |
 
 Error responses MUST NOT be signed. They are informational, not 
 historical records. HTTPS is the integrity mechanism for error responses.
 
-### 12.6 Metadata Document
+### 12.7 Metadata Document
 
 An authority MAY publish a metadata document describing its resolver's
 capabilities:
@@ -2310,6 +2635,7 @@ fields:
 | `mirror_urls` | array of strings | MAY | URLs of read-only mirrors hosting frozen snapshots of this authority's records. See Section 4.6.5 |
 | `successor` | object | MAY | Present iff this authority has been transferred. Object: `{ "authority": "newco.example", "transfer_event_id": "...", "effective_from": "..." }`. Clients SHOULD redirect subsequent requests to the successor |
 | `delegations` | array of objects | MAY | Active sub-namespace delegations. See Section 4.5.1 for entry shape |
+| `conformance_class` | string | SHOULD | One of `full`, `read-only`, `mirror`, `client-only` (Section 13). Absence implies `full` for compatibility with v0.1 resolvers |
 
 A resolver that does not publish `/meta` is still conformant. Clients
 that need a feature not advertised in `/meta` SHOULD attempt the
@@ -2319,11 +2645,102 @@ connect.
 Servers responding to `/meta` SHOULD set `Cache-Control: public, max-age=3600`
 or longer — the document changes infrequently.
 
+### 12.8 HTTP Authentication
+
+PhIP defines exactly one wire-level authentication mechanism for 
+authorized operations:
+
+- `Authorization: PhIP-Capability <base64url-encoded-token>` — a 
+  signed capability token (§11.3). Used for cross-authority writes 
+  and for restricted reads (§11.5).
+
+This is the only authentication scheme that conformant resolvers 
+MUST recognize on protocol endpoints (`/.well-known/phip/objects`, 
+`/.well-known/phip/resolve`, `/.well-known/phip/push`, 
+`/.well-known/phip/query`, `/.well-known/phip/history`).
+
+#### 12.8.1 Transport Layer
+
+All PhIP traffic MUST be carried over TLS (§4.3 requires HTTPS for 
+the resolver endpoint). TLS provides confidentiality and integrity 
+for the request/response stream; PhIP signatures provide 
+authenticity for the events themselves.
+
+A resolver MAY require mutual TLS (mTLS) to its protocol endpoints 
+as an additional access control layer. mTLS is **transport-level** 
+authentication and operates orthogonally to PhIP-Capability tokens — 
+both can be required, neither replaces the other. A resolver that 
+uses mTLS:
+
+- MUST still validate any presented PhIP-Capability tokens per 
+  §11.3.4.
+- MUST NOT skip event signature verification on the basis of mTLS 
+  (the event signature is what writes into the chain; mTLS does 
+  not touch it).
+- SHOULD document its trust anchor in the `/meta` document under a 
+  new optional field:
+
+  | Field | Type | Description |
+  |---|---|---|
+  | `mtls_required` | boolean | If `true`, clients MUST present a TLS client certificate signed by an acceptable CA |
+  | `mtls_ca_bundle_url` | string | URL where the resolver publishes its CA bundle for client cert issuance |
+
+#### 12.8.2 Non-Protocol Endpoints
+
+Resolvers commonly expose endpoints outside `/.well-known/phip/` — 
+admin consoles, health checks, metrics, log shipping, replication. 
+These are not part of the PhIP wire contract. Resolvers MAY use any 
+appropriate authentication mechanism on them: HTTP Basic, OAuth 2.0 
+Bearer, session cookies, mTLS, etc. PhIP imposes no constraint on 
+non-protocol endpoint authentication.
+
+A resolver MUST NOT accept PhIP protocol writes on a non-protocol 
+endpoint to bypass capability-token enforcement. Operations that 
+modify chain state MUST go through the standard endpoints with 
+their standard authentication, regardless of how the operator 
+authenticates to the management plane.
+
+#### 12.8.3 Other Authentication Schemes
+
+PhIP v0.1 deliberately does NOT define:
+
+- HTTP Basic authentication for protocol endpoints.
+- OAuth 2.0 Bearer tokens for protocol endpoints.
+- API-key headers for protocol endpoints.
+
+Adding any of these would create ambiguity about which scheme 
+authoritatively identifies the writing actor — `granted_to` in a 
+PhIP-Capability is the only way an authority can verify the claim 
+chain back to its issuing key. A bearer token issued by some other 
+system cannot anchor the same chain of trust.
+
+Resolvers MAY accept these schemes for **read-only** operations on 
+**public** objects as a developer-convenience layer (e.g. an API 
+key gates access to a query endpoint without authorizing any 
+write), but MUST NOT route restricted reads (`phip:access` policy 
+not `public`) or any writes through them.
+
 ---
 
 ## 13. Conformance
 
-A conformant PhIP resolver MUST:
+PhIP defines four conformance classes. A resolver MUST claim exactly 
+one class in its `/meta` document via the `conformance_class` field 
+(see §12.7) and MUST satisfy that class's full requirement set.
+
+| Class | Operations | Use case |
+|---|---|---|
+| **Full** | CREATE, GET, PUSH, QUERY, history | A primary resolver — runs an authority's namespaces day-to-day |
+| **Read-Only** | GET, QUERY, history | Public-facing replica, reporting endpoint, regulator-facing portal |
+| **Mirror** | GET, history (frozen snapshot) | Archival mirror for a transferred or defunct authority (§4.6.5) |
+| **Client-Only** | None as server; consumes the protocol | A client library or application — does not host objects |
+
+The four classes share most requirements; they differ on which 
+operations they expose and on the strictness of certain checks.
+
+### 13.1 Full Resolver
+
+A Full resolver MUST:
 
 - Implement CREATE, GET (including history sub-resource), PUSH, and 
   QUERY operations
@@ -2342,19 +2759,93 @@ A conformant PhIP resolver MUST:
   `current_head` in error details (Section 12.3.1)
 - Verify and enforce capability tokens for cross-org writes, including 
   scope validation (Section 11.3)
-- Return standard error responses per Section 12.5
+- Return standard error responses per Section 12.6
 - Return objects in terminal states (`disposed`, `consumed`, `archived`) 
   on GET
 - Return `history_length` and `history_head` on GET responses
 - Support cursor pagination on history retrieval and QUERY responses
 
-A conformant PhIP resolver SHOULD:
+A Full resolver SHOULD:
 
 - Support the `depth` parameter on GET
 - Support the `at` parameter on GET for point-in-time queries
 - Validate condition values against the standard vocabulary
 - Support `Cache-Control` headers on key resource responses
 - Publish its supported schema namespaces
+
+### 13.2 Read-Only Resolver
+
+A Read-Only resolver MUST satisfy every requirement of a Full 
+resolver **except** the write operations. Specifically, it MUST:
+
+- Implement GET (including history sub-resource) and QUERY
+- Validate signatures and hash-chain integrity on served events
+- Return objects in terminal states unchanged
+- Return `history_length` and `history_head` on GET responses
+- Support cursor pagination
+
+A Read-Only resolver MUST reject CREATE and PUSH attempts with 
+`405 Method Not Allowed` (HTTP-level — there is no PhIP error code 
+for this case, since the server is not refusing on protocol grounds 
+but on capability). The response body SHOULD include an error 
+envelope with code `WRITE_NOT_SUPPORTED`:
+
+| Code | HTTP | Description |
+|---|---|---|
+| `WRITE_NOT_SUPPORTED` | 405 | Resolver does not accept writes (Read-Only or Mirror conformance class) |
+
+A Read-Only resolver SHOULD obtain its data by replication from a 
+Full resolver of the same authority. The replication mechanism is 
+out of scope for v0.1; the only normative requirement is that 
+served events MUST verify against the authority's keys.
+
+### 13.3 Mirror Resolver
+
+A Mirror resolver serves a frozen snapshot of another authority's 
+records (§4.6.5). It MUST:
+
+- Implement GET and history sub-resource only
+- Serve content under the **original** authority's URI namespace 
+  (`/.well-known/phip/resolve/...`), not its own
+- Set `Cache-Control: public, immutable` and a long `max-age` 
+  (≥ 1 year) on all responses
+- Decline QUERY with `405 WRITE_NOT_SUPPORTED` — query results 
+  against a mirror could go out of date silently as the mirror's 
+  index drifts; clients needing query MUST use the Full resolver 
+  or a Read-Only replica
+
+Mirror operators MUST publish their mirror URL in the source 
+authority's `/meta.mirror_urls` (§12.7) for discoverability.
+
+### 13.4 Client-Only Implementations
+
+A client library or end-user application that consumes PhIP but 
+does not host objects MUST:
+
+- Implement RFC 8785 (JCS) canonicalization producing byte-identical 
+  output to the test vectors (`tests/vectors/jcs/`)
+- Compute hashes per §10.3 (the `sha256:` + 64-hex form)
+- Sign and verify Ed25519 signatures per §11.1
+- Verify hash chains per §10.3 on read
+- Honor the same-authority redirect policy of §4.3.3 and the 
+  authority-transfer exception of §4.6.4
+
+A client-only implementation SHOULD pass `tests/vectors/self-check.js` 
+on its native runtime before being declared conformant.
+
+### 13.5 Cross-Class Notes
+
+Resolvers MAY change conformance class over their lifetime — for 
+example, a Full resolver becomes a Read-Only resolver when its 
+authority is transferred (§4.6) and writes are redirected. The 
+class change SHOULD be reflected in `/meta` and SHOULD trigger a 
+client-side cache invalidation.
+
+A resolver MUST NOT silently downgrade: if it stops accepting 
+writes, it MUST return `405 WRITE_NOT_SUPPORTED` rather than 
+appearing to accept them. Silent downgrade is a high-impact 
+failure mode that breaks chain integrity from the writer's 
+perspective.
 
 A conformance test suite is maintained alongside this specification in the
 `tests/` directory of the reference repository. It has two independent
@@ -2370,7 +2861,7 @@ components:
 - `tests/conformance/` — a black-box HTTP suite that exercises a running
   PhIP server's `/.well-known/phip/*` endpoints through the full v0.1
   contract: CREATE, GET, PUSH, QUERY, `/history/`, chain-conflict
-  handling, and error envelopes from Section 12.5.
+  handling, and error envelopes from Section 12.6.
 
 Compliant implementations SHOULD execute both components before publishing
 a release.
@@ -2584,10 +3075,10 @@ Issues identified through scenario stress-testing and systematic review.
 | ~~A9~~ | Query predicate grammar | Field, attribute, and relation filters with glob syntax, two return modes, cursor pagination. See Section 12.4 |
 | ~~A11~~ | Capability token mechanics | `PhIP-Capability` HTTP header, four scope levels, token format with verification steps, short-lived tokens with expiry-based revocation. See Section 11.3 |
 | ~~A24~~ | Concurrency | Optimistic locking: PUSH requires `previous_hash` match, 409 `CHAIN_CONFLICT` on mismatch, client re-fetches/re-signs/retries. See Section 12.3.1 |
-| ~~A25~~ | Error response format | Standard error envelope with 17 error codes and HTTP status mappings. See Section 12.5 |
+| ~~A25~~ | Error response format | Standard error envelope with 17 error codes and HTTP status mappings. See Section 12.6 |
 | ~~A31~~ | Relation metadata | Optional flat `metadata` object on relations, carried through `relation_added` event payloads. See Section 7.2 |
 | ~~A32~~ | History pagination | GET returns state projection with `history_length`/`history_head`; separate `/history/` sub-resource with cursor pagination. See Section 12.2.1 |
-| ~~A10~~ | Resolver discovery, caching headers, redirect behavior | Authority name = DNS = HTTPS endpoint (no DNS TXT/SRV); `ETag`/`Cache-Control` guidance; same-authority-only redirect policy; `/.well-known/phip/meta` capability document. See Section 4.3 and Section 12.6 |
+| ~~A10~~ | Resolver discovery, caching headers, redirect behavior | Authority name = DNS = HTTPS endpoint (no DNS TXT/SRV); `ETag`/`Cache-Control` guidance; same-authority-only redirect policy; `/.well-known/phip/meta` capability document. See Section 4.3 and Section 12.7 |
 | ~~A1~~ | Sub-object addressing: independent objects vs. facets | Field-replaceable rule, no lifecycle inheritance, `contained_in` is normative source of truth, path segments are informational. See Section 4.4 |
 | ~~A13~~ | Design revision model and `instance_of` target type | Added `design` object type (Section 6.2) on the manufacturing track; `instance_of` MUST target a `design`; `supersedes`/`superseded_by` relations link revisions. See Sections 6.2, 6.3, 7.1 |
 | ~~A23~~ | Authority transfer / domain death | New `authority_transfer` event type signed by a long-lived root authority key; authority record at `/.well-known/authority`; `mirror_urls` and `successor` fields in `/meta`; same-authority redirect rule relaxed for verified transfers. See Section 4.6 |
@@ -2605,19 +3096,16 @@ Issues identified through scenario stress-testing and systematic review.
 | ~~A18~~ | Uncertainty qualifiers | New Section 5.2.1: parallel `<field>_quality` convention with `confidence`/`source`/`as_of`/`corrected_from`/`note`. Tools MUST treat qualified and unqualified fields identically for matching |
 | ~~A29~~ | connected_to bidirectional cross-org | New Section 7.3: relations are owned by their writing object; `connected_to` and `contains`/`contained_in` only enforceable on the writing side; asymmetric relations MUST NOT be treated as proof of physical state |
 | ~~A30~~ | Dangling relations | New Section 7.4: graceful degradation rules + new `DANGLING_RELATION` (422) error code for same-authority broken refs only; cross-authority targets verified lazily by readers |
+| ~~A33~~ | Batch operations | New Section 12.5: non-atomic `/objects/{ns}/batch` and `/push/{ns}/batch` endpoints with per-event results, 1000-event cap, advertised via `supported_operations` in `/meta`. Read-Only/Mirror resolvers reject with `WRITE_NOT_SUPPORTED` |
+| ~~A34~~ | Offline / air-gapped resolution | New Section 4.3.4: warm cache, signed PhIP bundle format (manifest + objects + history + keys), full chain verification on import, replay-on-reconnect with `CHAIN_CONFLICT` handling |
+| ~~A35~~ | HTTP authentication | New Section 12.8: PhIP-Capability is the only protocol-level auth scheme; mTLS is a transport overlay (does not replace event signatures); non-protocol endpoints free to use any scheme; basic/bearer/API-key MUST NOT route restricted reads or writes |
+| ~~A36~~ | Conformance levels | Section 13 restructured into four classes (Full / Read-Only / Mirror / Client-Only); new `WRITE_NOT_SUPPORTED` (405) error code; new `conformance_class` field in `/meta` |
+| ~~A37~~ | Schema versioning | New Section 8.4: semver MAJOR.MINOR with explicit additive vs. breaking change rules, versioned `$id` URLs, `version` field in schemas (all v0.1 schemas seeded at 1.0), advertise via `/meta.schema_namespaces`, 12-month minimum compatibility window |
 
 ### A.2 Open Issues — Post-v0.1
 
-No issues currently block the reference implementation. The remaining 
-items below are deferral candidates for v0.2.
-
-| # | Issue | Severity | Section |
-|---|---|---|---|
-| A33 | Batch/transaction operations for bulk object creation | Low | 12 |
-| A34 | Offline / air-gapped resolution | Low | 4.3 |
-| A35 | HTTP authentication mechanism | Low | 12 |
-| A36 | Conformance levels (read-only resolvers) | Low | 13 |
-| A37 | Schema versioning and evolution strategy | Low | 8 |
+All issues identified through v0.1 stress-testing are resolved. Future 
+revisions will add issues as they surface.
 
 ---
 

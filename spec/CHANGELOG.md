@@ -107,6 +107,33 @@ All notable changes to the PhIP specification will be documented in this file.
   4.3.3 plus new Section 12.6 metadata document. Section 13 conformance 
   suite TODO replaced with pointer to `tests/vectors/` and 
   `tests/conformance/`. 19 issues resolved total, 22 deferred.
+- **All five remaining Low-severity issues resolved** — 41 issues 
+  resolved total, 0 deferred. Spec backlog clean for v0.1.0-draft:
+  - **A33: Batch operations** — new §12.5: non-atomic 
+    `/objects/{ns}/batch` and `/push/{ns}/batch`, 1000-event cap, 
+    per-event results, 207 Multi-Status on partial success.
+  - **A34: Offline / air-gapped resolution** — new §4.3.4: warm 
+    cache and signed PhIP bundle format (`manifest.json` + 
+    `objects/`, `history/`, `keys/`), full chain verification on 
+    import, replay-on-reconnect for buffered writes.
+  - **A35: HTTP authentication** — new §12.8: 
+    `Authorization: PhIP-Capability` is the only protocol-level 
+    auth scheme; mTLS is a transport overlay; non-protocol 
+    endpoints (admin, health) free to use any scheme; 
+    basic/bearer/API-key MUST NOT route restricted reads or writes.
+  - **A36: Conformance levels** — §13 restructured into Full / 
+    Read-Only / Mirror / Client-Only classes. New 
+    `WRITE_NOT_SUPPORTED` (405) error code. New `conformance_class` 
+    field in `/meta`.
+  - **A37: Schema versioning** — new §8.4: semver MAJOR.MINOR with 
+    explicit additive vs. breaking change rules, versioned `$id` 
+    URLs, all v0.1 schemas seeded with `version: "1.0"`. 12-month 
+    minimum compatibility window after a MAJOR bump.
+
+- Section 12 sub-numbering: 12.5 (was Error Responses) → 12.6, 12.6 
+  (was Metadata Document) → 12.7, plus new 12.5 Batch Operations and 
+  new 12.8 HTTP Authentication. All cross-references updated.
+
 - **All twelve remaining Medium-severity issues resolved** — 36 issues 
   resolved total, 5 deferred (12 Medium → 0 Medium, all remaining are 
   Low):
