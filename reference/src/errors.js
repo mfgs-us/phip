@@ -1,4 +1,4 @@
-// Error envelope and code registry — Section 12.5.
+// Error envelope and code registry — Section 12.6.
 //
 // Each error code has a fixed HTTP status. Handlers throw a `PhipError` with a
 // code, optional human-readable message, and optional `details` object. The
@@ -17,12 +17,15 @@ const ERROR_CODES = {
   KEY_EXPIRED: 401,
   MISSING_CAPABILITY: 403,
   INVALID_CAPABILITY: 403,
+  ACCESS_DENIED: 403,
   FOREIGN_NAMESPACE: 403,
+  OPERATION_NOT_SUPPORTED: 405,
   INVALID_OBJECT: 422,
   INVALID_EVENT: 422,
   INVALID_TRANSITION: 422,
   INVALID_TRACK: 422,
   INVALID_RELATION: 422,
+  DANGLING_RELATION: 422,
   INVALID_QUERY: 422,
 };
 

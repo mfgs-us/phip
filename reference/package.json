@@ -2,7 +2,7 @@
   "name": "phip-reference-resolver",
   "version": "0.1.0-draft",
   "private": true,
-  "description": "Reference implementation of the PhIP Core Specification v0.1.0-draft. Intra-namespace in-memory resolver covering CREATE, GET, PUSH, QUERY with JCS canonicalization, Ed25519 signing, hash-chain verification, lifecycle track enforcement, and schema validation.",
+  "description": "Reference implementation of the PhIP Core Specification v0.1.0-draft. Intra-namespace in-memory resolver covering CREATE/GET/PUSH/QUERY/history/batch and the /meta endpoint, with JCS canonicalization, Ed25519 signing, hash-chain verification, lifecycle track enforcement (including the design object type), schema validation, lot mass conservation, yield-fraction conservation, dangling-relation detection, and phip:access read enforcement. Cryptographic verification of foreign-authority capability tokens and full authority-transfer mechanics are out of scope for v0.1 reference.",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
