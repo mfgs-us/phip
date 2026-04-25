@@ -227,6 +227,26 @@ function createApp(store, {
   // Federation client may be injected (tests pass an instance configured
   // for HTTP localhost calls). Default: HTTPS-only client.
   if (!federation) federation = new FederationClient();
+
+  // §4.6.2 declares `namespaces` and `transfer_event_id` as required on the
+  // successor descriptor. Refuse to start with a malformed successor —
+  // silent acceptance would either elide spec-mandated headers (M1) or
+  // transfer everything by default (M4 — surprising fail-open).
+  if (successor) {
+    if (!successor.authority || typeof successor.authority !== "string") {
+      throw new Error("PHIP_SUCCESSOR is missing required `authority` field");
+    }
+    if (!Array.isArray(successor.namespaces) || successor.namespaces.length === 0) {
+      throw new Error(
+        "PHIP_SUCCESSOR is missing required `namespaces` array (use [\"*\"] to transfer all)",
+      );
+    }
+    if (!successor.transfer_event_id || typeof successor.transfer_event_id !== "string") {
+      throw new Error(
+        "PHIP_SUCCESSOR is missing required `transfer_event_id` (§4.6.4 mandates the PhIP-Transfer-Event header)",
+      );
+    }
+  }
   function buildMeta() {
     const meta = {
       protocol_version: PROTOCOL_VERSION,
@@ -249,7 +269,9 @@ function createApp(store, {
   // emit `PhIP-Transfer-Event` with the originating event id.
   function matchTransferred(namespace) {
     if (!successor) return null;
-    const namespaces = successor.namespaces || ["*"];
+    // `namespaces` is required and validated at startup; default-to-["*"]
+    // would fail open (transfer everything if operator omits the field).
+    const namespaces = successor.namespaces;
     if (!namespaces.includes(namespace) && !namespaces.includes("*")) return null;
     // Effective-from gate.
     if (successor.effective_from && Date.parse(successor.effective_from) > Date.now()) {
@@ -260,15 +282,13 @@ function createApp(store, {
 
   function transferRedirect(res, succ, originalPath) {
     const target = `https://${succ.authority}${originalPath}`;
-    const headers = {
+    // `transfer_event_id` is validated at startup, so it's always present
+    // here. §4.6.4 requires the header on every transfer redirect.
+    res.writeHead(308, {
       Location: target,
+      "PhIP-Transfer-Event": succ.transfer_event_id,
       "Content-Length": "0",
-    };
-    if (succ.transfer_event_id) {
-      headers["PhIP-Transfer-Event"] = succ.transfer_event_id;
-    }
-    // 308 Permanent Redirect — preserves method and body for POST.
-    res.writeHead(308, headers);
+    });
     res.end();
   }
 
@@ -337,11 +357,26 @@ function createApp(store, {
         // Batch CREATE: /.well-known/phip/objects/{namespace}/batch
         if (appendBatchPath(parts) && parts.length === 5) {
           const body = await readJsonBody(req);
+          const prefix = "phip://" + authority + "/" + namespace + "/";
           const result = runBatch(body.events, (event) => {
-            if (!event || !event.phip_id || !event.phip_id.startsWith("phip://" + authority + "/" + namespace + "/")) {
+            if (!event || !event.phip_id || !event.phip_id.startsWith(prefix)) {
               throw new PhipError(
                 "FOREIGN_NAMESPACE",
                 "CREATE is only valid within the caller's own authority/namespace",
+              );
+            }
+            // §4.5.3: per-event delegation check inside batches. A
+            // delegated event MUST be sent to the delegate's resolver,
+            // not the parent's. We surface FOREIGN_NAMESPACE per-event
+            // so the rest of the batch can still proceed; the client
+            // resends those events to the delegate.
+            const cLocalId = event.phip_id.slice(prefix.length);
+            const cDel = matchDelegation(namespace, cLocalId);
+            if (cDel) {
+              throw new PhipError(
+                "FOREIGN_NAMESPACE",
+                "Event targets a delegated slice; resend to " + cDel.delegate_authority,
+                { delegate_authority: cDel.delegate_authority, namespace: cDel.namespace },
               );
             }
             const obj = store.create(event);
@@ -428,9 +463,22 @@ function createApp(store, {
         // Batch PUSH: /.well-known/phip/push/{namespace}/batch
         if (appendBatchPath(parts) && parts.length === 5) {
           const body = await readJsonBody(req);
+          const prefix = "phip://" + authority + "/" + namespace + "/";
           const result = runBatch(body.events, (event) => {
             if (!event || !event.phip_id) {
               throw new PhipError("INVALID_EVENT", "Event missing phip_id");
+            }
+            // §4.5.3: per-event delegation check inside batches.
+            if (event.phip_id.startsWith(prefix)) {
+              const cLocalId = event.phip_id.slice(prefix.length);
+              const dEv = matchDelegation(namespace, cLocalId);
+              if (dEv) {
+                throw new PhipError(
+                  "FOREIGN_NAMESPACE",
+                  "Event targets a delegated slice; resend to " + dEv.delegate_authority,
+                  { delegate_authority: dEv.delegate_authority, namespace: dEv.namespace },
+                );
+              }
             }
             const appended = store.push(event.phip_id, event);
             // Refresh the chain head from the store so callers can chain

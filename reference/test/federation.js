@@ -245,6 +245,94 @@ async function testCrossAuthorityToken() {
       rGhost.body.error.code, "INVALID_CAPABILITY",
       "unreachable foreign authority surfaces INVALID_CAPABILITY",
     );
+    // SSRF defense (S1): error envelope MUST NOT leak the underlying
+    // network error details (URL, hostname, etc.).
+    assert(
+      rGhost.body.error.message && !/nonexistent\.invalid/.test(rGhost.body.error.message),
+      "ghost-authority error envelope does not leak target hostname",
+    );
+
+    // SSRF defense: a token whose key_id points at a private IP
+    // (127.0.0.1) MUST be refused — and yet our test federation client
+    // is configured with allowPrivateAddresses=true (because allowHttp
+    // is on). To exercise the *production* path, build a fresh client
+    // with allowHttp:true but allowPrivateAddresses:false explicitly.
+    {
+      const strictFed = new FederationClient({
+        allowHttp: true,
+        allowPrivateAddresses: false,
+        urlBuilder, // reuse the test url builder
+      });
+      // Stand up a one-off resolver that uses the strict federation
+      // client, on a fresh authority. Reuse store A's content via its
+      // own server — actually simpler: spin a third server on a fresh
+      // port with the strict client and authority, bootstrap a key
+      // there, set up a restricted object, then probe with a token
+      // whose signing key is at "alice.local" (which strictly resolves
+      // to 127.0.0.1 — should be refused).
+      const tmp = await startServer(new Store(), { authority: "tmp", port: 0, federation: new FederationClient() });
+      const portC = tmp.port;
+      tmp.server.close();
+      const authorityC = "carol.local";
+      portMap[authorityC] = portC;
+      const { server: serverC, store: storeC } = await (async () => {
+        const s = new Store();
+        const r = await startServer(s, {
+          authority: authorityC, port: portC, federation: strictFed,
+        });
+        return { server: r.server, store: s };
+      })();
+      try {
+        const kpC = generateEd25519KeyPair();
+        const bootC = bootstrapKeyEvent(authorityC, "keys", "root", kpC);
+        await jsonRequest(portC, "POST", "/.well-known/phip/objects/keys", bootC);
+        const objC = signEvent(
+          {
+            event_id: crypto.randomUUID(),
+            phip_id: `phip://${authorityC}/units/x`,
+            type: "created",
+            timestamp: "2026-02-01T00:00:00Z",
+            actor: `phip://${authorityC}/keys/root`,
+            previous_hash: "genesis",
+            payload: {
+              object_type: "component", state: "stock",
+              attributes: { "phip:access": { policy: "authenticated" } },
+            },
+          },
+          kpC.privateKey,
+          `phip://${authorityC}/keys/root`,
+        );
+        await jsonRequest(portC, "POST", "/.well-known/phip/objects/units", objC);
+        // Probe with a token whose signing authority is "alice.local"
+        // (mapped to 127.0.0.1 via urlBuilder) — strict client refuses.
+        const ssrfToken = signEvent(
+          {
+            phip_capability: "1.0",
+            token_id: crypto.randomUUID(),
+            granted_by: keyPhipB,
+            granted_to: keyPhipB,
+            scope: "read_state",
+            object_filter: `phip://${authorityC}/*`,
+            not_before: "2020-01-01T00:00:00Z",
+            expires: "2099-01-01T00:00:00Z",
+          },
+          kpB.privateKey,
+          keyPhipB,
+        );
+        const ssrfB64 = Buffer.from(JSON.stringify(ssrfToken), "utf8").toString("base64url");
+        const rSsrf = await jsonRequest(
+          portC, "GET", "/.well-known/phip/resolve/units/x", null,
+          { Authorization: "PhIP-Capability " + ssrfB64 },
+        );
+        assertEqual(rSsrf.status, 403, "SSRF probe to private address → 403");
+        assertEqual(
+          rSsrf.body.error.code, "INVALID_CAPABILITY",
+          "SSRF probe surfaces INVALID_CAPABILITY",
+        );
+      } finally {
+        serverC.close();
+      }
+    }
   } finally {
     serverA.close();
     serverB.close();
@@ -398,10 +486,57 @@ async function testTransfer() {
   }
 }
 
+// ──────────────────────────────────────────────────────────────────
+// Test 4: PHIP_SUCCESSOR validation refuses malformed configs
+// ──────────────────────────────────────────────────────────────────
+
+async function testSuccessorValidation() {
+  console.log("\n=== Test 4: successor config validation ===");
+
+  // Missing transfer_event_id — must throw at server start.
+  let threw = false;
+  try {
+    const r = await startServer(new Store(), {
+      authority: "victim.local",
+      port: 0,
+      federation: new FederationClient({ allowHttp: true }),
+      successor: {
+        authority: "newco.example",
+        namespaces: ["parts"],
+        // transfer_event_id deliberately missing
+      },
+    });
+    r.server.close();
+  } catch (e) {
+    threw = e.message.includes("transfer_event_id");
+  }
+  assert(threw, "missing transfer_event_id refuses startup");
+
+  // Missing namespaces — must throw at server start.
+  threw = false;
+  try {
+    const r = await startServer(new Store(), {
+      authority: "victim.local",
+      port: 0,
+      federation: new FederationClient({ allowHttp: true }),
+      successor: {
+        authority: "newco.example",
+        transfer_event_id: "txfr-x",
+        // namespaces deliberately missing — should NOT default to ["*"]
+      },
+    });
+    r.server.close();
+  } catch (e) {
+    threw = e.message.includes("namespaces");
+  }
+  assert(threw, "missing namespaces refuses startup (no fail-open default)");
+}
+
 async function main() {
   await testCrossAuthorityToken();
   await testDelegation();
   await testTransfer();
+  await testSuccessorValidation();
   console.log("\n" + (failures === 0 ? "ALL PASS" : failures + " FAILURE(S)"));
   process.exit(failures === 0 ? 0 : 1);
 }
