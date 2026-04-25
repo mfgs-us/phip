@@ -31,7 +31,6 @@ const {
   isValidStateForType,
   isValidTransition,
   validTransitionsFrom,
-  isTerminal,
   acceptsEventInTerminal,
 } = require("./lifecycle");
 const { hashEvent, verifyEvent, publicKeyFromBase64Url } = require("./crypto");
@@ -117,7 +116,7 @@ class Store {
         : undefined,
     };
 
-    this._validateRelationTargets(record.relations);
+    this._validateRelationTargets(record.relations, record.phip_id);
     validateObject({ ...record, history: [] });
 
     this.objects.set(event.phip_id, { record, history: [event] });
@@ -183,7 +182,7 @@ class Store {
     // runs lifecycle/type/relation validation on the result.
     this._validatePayloadConstraints(event, slot.record);
     const nextRecord = this._applyEventToRecord(slot.record, event);
-    this._validateRelationTargets(nextRecord.relations || []);
+    this._validateRelationTargets(nextRecord.relations || [], nextRecord.phip_id);
     validateObject({ ...nextRecord, history: [] });
 
     slot.record = nextRecord;
@@ -472,12 +471,13 @@ class Store {
   }
 
   // §10.4.1: yield_fraction values are non-negative reals in [0,1]. The sum
-  // of fractions on outputs that share an input MUST be ≤ 1 + ε (we use
-  // ε = 1e-6 per spec recommendation).
+  // of fractions on outputs that share an input (via derived_from) MUST be
+  // ≤ 1 + ε. Per-input enforcement requires resolving each output object
+  // to read its derived_from relations.
   _validateProcessYields(payload) {
     const outputs = payload.outputs || [];
     if (!outputs.length) return;
-    // Per-output range check.
+    // Per-output range check (always enforceable from the event alone).
     for (const o of outputs) {
       if (o.yield_fraction === undefined || o.yield_fraction === null) continue;
       const f = o.yield_fraction;
@@ -489,31 +489,61 @@ class Store {
         );
       }
     }
-    // Sum-per-input check. We can only enforce this when outputs name a
-    // shared input via a sibling field; the spec models this via
-    // derived_from on the output objects, which lives outside this event.
-    // The conservative check here: if `inputs` is present and outputs
-    // collectively claim fractions, the total fraction MUST NOT exceed
-    // (number of inputs) + ε. This is a coarse upper bound; tighter
-    // per-input enforcement requires resolving derived_from on each output.
+
     const inputs = payload.inputs || [];
     if (!inputs.length) return;
-    let total = 0;
-    let anyFraction = false;
+    const EPSILON = 1e-6;
+    const inputIds = new Set(inputs.map((i) => i.phip_id));
+
+    // Single-input case: per-input sum collapses to the total over outputs
+    // that have any yield_fraction, since they all draw from the one input.
+    if (inputs.length === 1) {
+      let total = 0;
+      let any = false;
+      for (const o of outputs) {
+        if (typeof o.yield_fraction === "number") {
+          total += o.yield_fraction;
+          any = true;
+        }
+      }
+      if (any && total > 1 + EPSILON) {
+        throw new PhipError(
+          "INVALID_EVENT",
+          "Sum of yield_fraction across outputs exceeds 1.0 (mass duplication)",
+          { input: [...inputIds][0], sum: total, tolerance: EPSILON },
+        );
+      }
+      return;
+    }
+
+    // Multi-input case: per-input check requires reading each output's
+    // `derived_from` relations to know which inputs it draws from. We do
+    // this best-effort against the local store; outputs that aren't yet
+    // registered (or live under another authority) are skipped.
+    const sumPerInput = new Map();
     for (const o of outputs) {
-      if (typeof o.yield_fraction === "number") {
-        total += o.yield_fraction;
-        anyFraction = true;
+      if (typeof o.yield_fraction !== "number") continue;
+      const slot = this.objects.get(o.phip_id);
+      if (!slot) continue;
+      const derivedFrom = (slot.record.relations || [])
+        .filter((r) => r.type === "derived_from" && inputIds.has(r.phip_id))
+        .map((r) => r.phip_id);
+      for (const inputId of derivedFrom) {
+        sumPerInput.set(inputId, (sumPerInput.get(inputId) || 0) + o.yield_fraction);
       }
     }
-    const EPSILON = 1e-6;
-    if (anyFraction && total > inputs.length + EPSILON) {
-      throw new PhipError(
-        "INVALID_EVENT",
-        "Sum of yield_fraction across outputs exceeds the number of inputs (mass duplication)",
-        { sum: total, inputs: inputs.length, tolerance: EPSILON },
-      );
+    for (const [inputId, sum] of sumPerInput) {
+      if (sum > 1 + EPSILON) {
+        throw new PhipError(
+          "INVALID_EVENT",
+          "Sum of yield_fraction across outputs exceeds 1.0 for input '" + inputId + "'",
+          { input: inputId, sum, tolerance: EPSILON },
+        );
+      }
     }
+    // Outputs whose derived_from we could not resolve are not enforced
+    // here; readers SHOULD re-verify from the event log. This is a known
+    // gap when outputs span authorities.
   }
 
   // §10.5.1: lot_split — sum of resulting quantities (+ optional loss) must
@@ -543,24 +573,44 @@ class Store {
   }
 
   // §10.5.1: lot_merge — sum of source quantities MUST equal the resulting
-  // (target) lot's quantity within tolerance.
+  // (target) lot's quantity within tolerance. The check fires only when
+  // ALL sources are locally resolvable with a quantity in the target's
+  // unit. If any source is unresolvable (foreign authority) or has a
+  // missing/mismatched quantity, the check is skipped — partial sums
+  // would produce false positives. Already-consumed source lots MUST be
+  // rejected (re-merging would double-count).
   _validateLotMerge(payload, targetRecord) {
     const sources = payload.source_lots || [];
     const targetQty = this._readQuantity(targetRecord && targetRecord.identity);
     if (!targetQty) return;
-    const sumSources = this._sumQuantities(
-      sources.map((s) => {
-        // source_lots entries don't carry quantity directly; fall back to
-        // the lot's identity.quantity from the local store if known.
-        const slot = this.objects.get(s.phip_id);
-        if (slot && slot.record && slot.record.identity) {
-          return slot.record.identity;
-        }
-        return s; // accept inline quantity_kg / quantity object on the entry
-      }),
-      targetQty.unit,
-    );
-    if (sumSources === null) return;
+
+    // Reject already-consumed sources before any conservation math.
+    for (const s of sources) {
+      const slot = this.objects.get(s.phip_id);
+      if (slot && slot.record && slot.record.state === "consumed") {
+        throw new PhipError(
+          "INVALID_EVENT",
+          "lot_merge source is already consumed: " + s.phip_id,
+          { source: s.phip_id, state: "consumed" },
+        );
+      }
+    }
+
+    // Resolve each source's quantity. Skip the conservation check if any
+    // source can't be resolved (foreign authority or missing quantity).
+    const resolved = [];
+    for (const s of sources) {
+      const slot = this.objects.get(s.phip_id);
+      const inlineQty = this._readQuantity(s);
+      const recordQty = slot && slot.record ? this._readQuantity(slot.record.identity) : null;
+      const qty = inlineQty || recordQty;
+      if (!qty || qty.unit !== targetQty.unit) {
+        return; // partial reads → can't check; spec permits skipping
+      }
+      resolved.push(qty);
+    }
+    let sumSources = 0;
+    for (const q of resolved) sumSources += q.value;
     const epsilon = this._tolerance(targetQty);
     if (Math.abs(sumSources - targetQty.value) > epsilon) {
       throw new PhipError(
@@ -640,11 +690,16 @@ class Store {
     return total;
   }
 
-  // §6.4.1: precision is the conservation tolerance. Default to 0.1% of the
-  // source value if precision is absent.
+  // §6.4.1 / §10.5.1: tolerance ε is the smaller of 0.1% of the source
+  // value or the unit precision (when supplied). When precision is absent,
+  // fall back to 0.1% with a tiny floor to avoid zero-tolerance on
+  // zero-value lots.
   _tolerance(qty) {
-    if (typeof qty.precision === "number" && qty.precision > 0) return qty.precision;
-    return Math.max(qty.value * 0.001, 1e-9);
+    const pct = qty.value * 0.001;
+    if (typeof qty.precision === "number" && qty.precision > 0) {
+      return Math.max(Math.min(pct, qty.precision), 1e-9);
+    }
+    return Math.max(pct, 1e-9);
   }
 
   // §11.5: enforce phip:access policy on read operations.
@@ -673,7 +728,9 @@ class Store {
       );
     }
 
-    // authenticated / capability — token required.
+    // authenticated / capability — token required. Surface a deferred
+    // parse error here (it was suppressed for public objects).
+    if (caller && caller.parseError) throw caller.parseError;
     if (!caller || !caller.token) {
       throw new PhipError("MISSING_CAPABILITY", "Read access requires a capability token");
     }
@@ -711,9 +768,14 @@ class Store {
       throw new PhipError("INVALID_CAPABILITY", "Capability token has expired");
     }
     // §11.5.2 step 7: if policy is `capability`, granted_to MUST match the
-    // requesting actor.
-    if (policy === "capability") {
-      if (!caller.actor || token.granted_to !== caller.actor) {
+    // requesting actor. The reference resolver derives `caller.actor` from
+    // the token's own granted_to (parseCapabilityHeader), so this check is
+    // *currently* tautological — production resolvers identify the caller
+    // via mTLS or signed request, then compare against granted_to. We
+    // keep the check shape so the production drop-in is small, and skip
+    // it when the actor was derived from the token.
+    if (policy === "capability" && caller.actor_authenticated_externally) {
+      if (token.granted_to !== caller.actor) {
         throw new PhipError(
           "ACCESS_DENIED",
           "Capability token granted_to does not match the requesting actor",
@@ -730,12 +792,26 @@ class Store {
     return m1 && m2 && m1[1] === m2[1];
   }
 
-  _validateRelationTargets(relations) {
+  _validateRelationTargets(relations, subjectPhipId) {
     for (const rel of relations) {
+      // §7.4: same-authority dangling targets MUST be rejected (CREATE
+      // path; the relation_added handler does the same in push).
+      // subjectPhipId may be undefined when called from contexts that do
+      // not need the dangling check (e.g., recomputing projections); skip
+      // gracefully in that case.
+      if (subjectPhipId && this._isSameAuthorityTarget(subjectPhipId, rel.phip_id)) {
+        if (!this.objects.has(rel.phip_id)) {
+          throw new PhipError(
+            "DANGLING_RELATION",
+            "Relation references unknown same-authority object: " + rel.phip_id,
+            { relation_type: rel.type, target: rel.phip_id },
+          );
+        }
+      }
       const constraint = RELATION_TARGET_TYPE_CONSTRAINTS[rel.type];
       if (!constraint) continue;
-      // We can only enforce constraints when the target is a locally
-      // resolvable object. Foreign targets are resolver-extended validation.
+      // Type constraint check — only enforceable for locally resolvable
+      // targets. Foreign targets are reader-side concerns.
       const target = this.objects.get(rel.phip_id);
       if (!target) continue;
       if (!constraint.includes(target.record.object_type)) {

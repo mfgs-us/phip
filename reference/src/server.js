@@ -48,7 +48,11 @@ function buildPhipId(authority, namespace, localId) {
 }
 
 // Parse the Authorization: PhIP-Capability <base64url> header into a caller
-// object. Returns null when no header is present.
+// object. Returns null when no header is present. If the header is present
+// but malformed, returns a caller with a deferred `parseError` — the access
+// check only surfaces the error when the target object's policy actually
+// requires a token. This avoids denying access to `public` objects when a
+// client happens to send a stray/malformed Authorization header.
 //
 // v0.1 reference: structural parse + expiry check only. Cryptographic
 // verification of the token's `signature` against the granting authority's
@@ -59,17 +63,16 @@ function parseCapabilityHeader(req) {
   const auth = req.headers && req.headers.authorization;
   if (!auth || !auth.startsWith("PhIP-Capability ")) return null;
   const tokenB64 = auth.slice("PhIP-Capability ".length).trim();
-  let token;
   try {
     const buf = Buffer.from(tokenB64, "base64url");
-    token = JSON.parse(buf.toString("utf8"));
+    const token = JSON.parse(buf.toString("utf8"));
+    if (!token || typeof token !== "object" || token.phip_capability !== "1.0") {
+      return { parseError: new PhipError("INVALID_CAPABILITY", "Capability token has wrong shape or version") };
+    }
+    return { token, actor: token.granted_to || null };
   } catch (e) {
-    throw new PhipError("INVALID_CAPABILITY", "Capability token is not valid base64url-encoded JSON");
+    return { parseError: new PhipError("INVALID_CAPABILITY", "Capability token is not valid base64url-encoded JSON") };
   }
-  if (!token || typeof token !== "object" || token.phip_capability !== "1.0") {
-    throw new PhipError("INVALID_CAPABILITY", "Capability token has wrong shape or version");
-  }
-  return { token, actor: token.granted_to || null };
 }
 
 function readJsonBody(req) {
@@ -124,17 +127,33 @@ function sendError(res, err) {
 }
 
 // Run a per-event handler over an array of events and aggregate the
-// per-event outcomes into a §12.5.3-shaped response.
+// per-event outcomes into a §12.5.3-shaped response. Envelope-level
+// errors (non-array `events`, oversized batch) are returned as a special
+// `envelopeError` object with HTTP 400; they are NOT thrown via PhipError
+// because PhipError("INVALID_EVENT") maps to 422, and §12.5.3 mandates
+// 400 for envelope-malformed.
 function runBatch(events, handler) {
   if (!Array.isArray(events)) {
-    throw new PhipError("INVALID_EVENT", "Batch body MUST contain an `events` array");
+    return {
+      envelopeError: {
+        status: 400,
+        body: { error: { code: "INVALID_EVENT", message: "Batch body MUST contain an `events` array" } },
+      },
+    };
   }
   if (events.length > BATCH_MAX_EVENTS) {
-    throw new PhipError(
-      "INVALID_EVENT",
-      "Batch exceeds maximum of " + BATCH_MAX_EVENTS + " events",
-      { max: BATCH_MAX_EVENTS, supplied: events.length },
-    );
+    return {
+      envelopeError: {
+        status: 400,
+        body: {
+          error: {
+            code: "INVALID_EVENT",
+            message: "Batch exceeds maximum of " + BATCH_MAX_EVENTS + " events",
+            details: { max: BATCH_MAX_EVENTS, supplied: events.length },
+          },
+        },
+      },
+    };
   }
 
   const results = [];
@@ -222,7 +241,7 @@ function createApp(store, { authority }) {
         // Batch CREATE: /.well-known/phip/objects/{namespace}/batch
         if (appendBatchPath(parts) && parts.length === 5) {
           const body = await readJsonBody(req);
-          const { status, body: batchBody } = runBatch(body.events, (event) => {
+          const result = runBatch(body.events, (event) => {
             if (!event || !event.phip_id || !event.phip_id.startsWith("phip://" + authority + "/" + namespace + "/")) {
               throw new PhipError(
                 "FOREIGN_NAMESPACE",
@@ -236,7 +255,10 @@ function createApp(store, { authority }) {
               history_head: obj.history_head,
             };
           });
-          return sendJson(res, status, batchBody);
+          if (result.envelopeError) {
+            return sendJson(res, result.envelopeError.status, result.envelopeError.body);
+          }
+          return sendJson(res, result.status, result.body);
         }
 
         // Single CREATE.
@@ -284,7 +306,7 @@ function createApp(store, { authority }) {
         // Batch PUSH: /.well-known/phip/push/{namespace}/batch
         if (appendBatchPath(parts) && parts.length === 5) {
           const body = await readJsonBody(req);
-          const { status, body: batchBody } = runBatch(body.events, (event) => {
+          const result = runBatch(body.events, (event) => {
             if (!event || !event.phip_id) {
               throw new PhipError("INVALID_EVENT", "Event missing phip_id");
             }
@@ -302,7 +324,10 @@ function createApp(store, { authority }) {
               event_id: appended.event_id,
             };
           });
-          return sendJson(res, status, batchBody);
+          if (result.envelopeError) {
+            return sendJson(res, result.envelopeError.status, result.envelopeError.body);
+          }
+          return sendJson(res, result.status, result.body);
         }
 
         const localId = parts.slice(4).join("/");

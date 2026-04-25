@@ -517,6 +517,231 @@ async function httpRoundTrip() {
     const rBadSplit = await jsonRequest("POST", "/.well-known/phip/push/" + NAMESPACE + "/" + LOT_LOCAL, badSplitEvt);
     assertEqual(rBadSplit.status, 422, "Mass-violating lot_split returns 422");
     assertEqual(rBadSplit.body.error.code, "INVALID_EVENT", "Mass conservation violation surfaces INVALID_EVENT");
+
+    // ── Yield fraction enforcement (§10.4.1) ────────────────────────────
+    // Single-input process with sum > 1+ε must be rejected.
+    // Set up: a lot in stock with a quantity, used as a process input.
+    const STOCK_LOCAL = "lots/stock-001";
+    const STOCK_PHIP = "phip://" + AUTHORITY + "/" + NAMESPACE + "/" + STOCK_LOCAL;
+    const stockEvt = signEvent(buildEvent({
+      eventId: crypto.randomUUID(), phipId: STOCK_PHIP, type: "created",
+      timestamp: "2026-07-01T00:00:00Z", actor: KEY_PHIP_ID, previousHash: "genesis",
+      payload: { object_type: "lot", state: "stock", identity: { fungible: true } },
+    }), kp.privateKey, KEY_PHIP_ID);
+    await jsonRequest("POST", "/.well-known/phip/objects/" + NAMESPACE, stockEvt);
+
+    const stockHead = (await jsonRequest("GET", "/.well-known/phip/resolve/" + NAMESPACE + "/" + STOCK_LOCAL)).body.history_head;
+    const badYieldEvt = signEvent(buildEvent({
+      eventId: crypto.randomUUID(), phipId: STOCK_PHIP, type: "process",
+      timestamp: "2026-07-02T00:00:00Z", actor: KEY_PHIP_ID, previousHash: stockHead,
+      payload: {
+        process_type: "test_overshoot",
+        inputs: [{ phip_id: STOCK_PHIP, consumed: false }],
+        outputs: [
+          { phip_id: "phip://" + AUTHORITY + "/" + NAMESPACE + "/lots/out-1", yield_fraction: 0.7 },
+          { phip_id: "phip://" + AUTHORITY + "/" + NAMESPACE + "/lots/out-2", yield_fraction: 0.5 },
+        ],
+      },
+    }), kp.privateKey, KEY_PHIP_ID);
+    const rBadYield = await jsonRequest("POST", "/.well-known/phip/push/" + NAMESPACE + "/" + STOCK_LOCAL, badYieldEvt);
+    assertEqual(rBadYield.status, 422, "yield_fraction sum > 1 returns 422");
+    assertEqual(rBadYield.body.error.code, "INVALID_EVENT", "yield_fraction overshoot is INVALID_EVENT");
+
+    // Single-input process with sum exactly 1.0 must be accepted.
+    const goodYieldEvt = signEvent(buildEvent({
+      eventId: crypto.randomUUID(), phipId: STOCK_PHIP, type: "process",
+      timestamp: "2026-07-03T00:00:00Z", actor: KEY_PHIP_ID, previousHash: stockHead,
+      payload: {
+        process_type: "split_evenly",
+        inputs: [{ phip_id: STOCK_PHIP, consumed: false }],
+        outputs: [
+          { phip_id: "phip://" + AUTHORITY + "/" + NAMESPACE + "/lots/out-A", yield_fraction: 0.6 },
+          { phip_id: "phip://" + AUTHORITY + "/" + NAMESPACE + "/lots/out-B", yield_fraction: 0.4 },
+        ],
+      },
+    }), kp.privateKey, KEY_PHIP_ID);
+    const rGoodYield = await jsonRequest("POST", "/.well-known/phip/push/" + NAMESPACE + "/" + STOCK_LOCAL, goodYieldEvt);
+    assertEqual(rGoodYield.status, 201, "yield_fraction sum = 1.0 is accepted");
+
+    // ── Measurement payload (§11.4.2) ───────────────────────────────────
+    const m1Head = (await jsonRequest("GET", "/.well-known/phip/resolve/" + NAMESPACE + "/" + STOCK_LOCAL)).body.history_head;
+    const goodMeasEvt = signEvent(buildEvent({
+      eventId: crypto.randomUUID(), phipId: STOCK_PHIP, type: "measurement",
+      timestamp: "2026-07-10T00:00:00Z", actor: KEY_PHIP_ID, previousHash: m1Head,
+      payload: { metric: "moisture_pct", value: 12.4, unit: "%", as_of: "2026-07-10T00:00:00Z" },
+    }), kp.privateKey, KEY_PHIP_ID);
+    const rGoodMeas = await jsonRequest("POST", "/.well-known/phip/push/" + NAMESPACE + "/" + STOCK_LOCAL, goodMeasEvt);
+    assertEqual(rGoodMeas.status, 201, "Well-formed measurement is accepted");
+
+    const m2Head = (await jsonRequest("GET", "/.well-known/phip/resolve/" + NAMESPACE + "/" + STOCK_LOCAL)).body.history_head;
+    const badMeasEvt = signEvent(buildEvent({
+      eventId: crypto.randomUUID(), phipId: STOCK_PHIP, type: "measurement",
+      timestamp: "2026-07-11T00:00:00Z", actor: KEY_PHIP_ID, previousHash: m2Head,
+      payload: { value: 12.4 }, // missing metric and as_of
+    }), kp.privateKey, KEY_PHIP_ID);
+    const rBadMeas = await jsonRequest("POST", "/.well-known/phip/push/" + NAMESPACE + "/" + STOCK_LOCAL, badMeasEvt);
+    assertEqual(rBadMeas.status, 422, "measurement missing required fields returns 422");
+    assertEqual(rBadMeas.body.error.code, "INVALID_EVENT", "measurement missing fields is INVALID_EVENT");
+
+    // ── instance_of happy path (§6.3) ───────────────────────────────────
+    const goodInstEvt = signEvent(buildEvent({
+      eventId: crypto.randomUUID(),
+      phipId: "phip://" + AUTHORITY + "/" + NAMESPACE + "/units/widget-001",
+      type: "created", timestamp: "2026-08-01T00:00:00Z", actor: KEY_PHIP_ID,
+      previousHash: "genesis",
+      payload: {
+        object_type: "component", state: "stock",
+        relations: [{ type: "instance_of", phip_id: DESIGN_PHIP }],
+      },
+    }), kp.privateKey, KEY_PHIP_ID);
+    const rGoodInst = await jsonRequest("POST", "/.well-known/phip/objects/" + NAMESPACE, goodInstEvt);
+    assertEqual(rGoodInst.status, 201, "instance_of pointing at a design is accepted");
+
+    // ── DANGLING_RELATION on CREATE (§7.4) ──────────────────────────────
+    const danglingCreateEvt = signEvent(buildEvent({
+      eventId: crypto.randomUUID(),
+      phipId: "phip://" + AUTHORITY + "/" + NAMESPACE + "/units/widget-002",
+      type: "created", timestamp: "2026-08-02T00:00:00Z", actor: KEY_PHIP_ID,
+      previousHash: "genesis",
+      payload: {
+        object_type: "component", state: "stock",
+        relations: [{
+          type: "contains",
+          phip_id: "phip://" + AUTHORITY + "/" + NAMESPACE + "/parts/does-not-exist",
+        }],
+      },
+    }), kp.privateKey, KEY_PHIP_ID);
+    const rDangCreate = await jsonRequest("POST", "/.well-known/phip/objects/" + NAMESPACE, danglingCreateEvt);
+    assertEqual(rDangCreate.status, 422, "DANGLING_RELATION on CREATE returns 422");
+    assertEqual(rDangCreate.body.error.code, "DANGLING_RELATION", "CREATE with same-authority dangling target rejected");
+
+    // Cross-authority dangling target on CREATE should be ACCEPTED (verified
+    // lazily by readers per §7.4).
+    const crossAuthCreateEvt = signEvent(buildEvent({
+      eventId: crypto.randomUUID(),
+      phipId: "phip://" + AUTHORITY + "/" + NAMESPACE + "/units/widget-003",
+      type: "created", timestamp: "2026-08-03T00:00:00Z", actor: KEY_PHIP_ID,
+      previousHash: "genesis",
+      payload: {
+        object_type: "component", state: "stock",
+        relations: [{
+          type: "contains",
+          phip_id: "phip://other-authority.example/parts/anything",
+        }],
+      },
+    }), kp.privateKey, KEY_PHIP_ID);
+    const rCrossCreate = await jsonRequest("POST", "/.well-known/phip/objects/" + NAMESPACE, crossAuthCreateEvt);
+    assertEqual(rCrossCreate.status, 201, "Cross-authority relation target is accepted on CREATE");
+
+    // ── phip:access policy=authenticated, MISSING_CAPABILITY ────────────
+    const authObjLocal = "units/auth-only";
+    const authObjPhip = "phip://" + AUTHORITY + "/" + NAMESPACE + "/" + authObjLocal;
+    const authObjEvt = signEvent(buildEvent({
+      eventId: crypto.randomUUID(), phipId: authObjPhip, type: "created",
+      timestamp: "2026-09-01T00:00:00Z", actor: KEY_PHIP_ID, previousHash: "genesis",
+      payload: {
+        object_type: "component", state: "stock",
+        attributes: { "phip:access": { policy: "authenticated" } },
+      },
+    }), kp.privateKey, KEY_PHIP_ID);
+    await jsonRequest("POST", "/.well-known/phip/objects/" + NAMESPACE, authObjEvt);
+    const rNoToken = await jsonRequest("GET", "/.well-known/phip/resolve/" + NAMESPACE + "/" + authObjLocal);
+    assertEqual(rNoToken.status, 403, "Authenticated read without token returns 403");
+    assertEqual(rNoToken.body.error.code, "MISSING_CAPABILITY", "Surface MISSING_CAPABILITY");
+
+    // With a structurally-valid token (any read scope) → allowed.
+    const tokenAuth = {
+      phip_capability: "1.0",
+      token_id: crypto.randomUUID(),
+      granted_by: KEY_PHIP_ID,
+      granted_to: KEY_PHIP_ID,
+      scope: "read_state",
+      object_filter: "phip://" + AUTHORITY + "/*",
+      not_before: "2026-01-01T00:00:00Z",
+      expires: "2030-01-01T00:00:00Z",
+      signature: { algorithm: "Ed25519", key_id: KEY_PHIP_ID, value: "fake" },
+    };
+    const tokenAuthB64 = Buffer.from(JSON.stringify(tokenAuth), "utf8").toString("base64url");
+    const rWithToken = await new Promise((resolve, reject) => {
+      const url = new URL(base + "/.well-known/phip/resolve/" + NAMESPACE + "/" + authObjLocal);
+      const req = http.request({
+        hostname: url.hostname, port: url.port, path: url.pathname, method: "GET",
+        headers: { "Authorization": "PhIP-Capability " + tokenAuthB64 },
+      }, (res) => {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("end", () => resolve({ status: res.statusCode, body: data ? JSON.parse(data) : null }));
+      });
+      req.on("error", reject);
+      req.end();
+    });
+    assertEqual(rWithToken.status, 200, "Authenticated read with valid-shape token returns 200");
+
+    // Public objects accept malformed Authorization header (B1 fix).
+    const rPublicWithBadHeader = await new Promise((resolve, reject) => {
+      const url = new URL(base + "/.well-known/phip/resolve/" + NAMESPACE + "/" + DESIGN_LOCAL);
+      const req = http.request({
+        hostname: url.hostname, port: url.port, path: url.pathname, method: "GET",
+        headers: { "Authorization": "PhIP-Capability not-a-token" },
+      }, (res) => {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("end", () => resolve({ status: res.statusCode, body: data ? JSON.parse(data) : null }));
+      });
+      req.on("error", reject);
+      req.end();
+    });
+    assertEqual(rPublicWithBadHeader.status, 200, "Public object GET with malformed Authorization still succeeds");
+
+    // ── QUERY omission for restricted objects (§11.5.3) ─────────────────
+    const rQueryAfter = await jsonRequest("POST", "/.well-known/phip/query/" + NAMESPACE, {
+      filters: { object_type: "component" },
+    });
+    assert(
+      Array.isArray(rQueryAfter.body.matches) && !rQueryAfter.body.matches.includes(authObjPhip),
+      "QUERY omits restricted object (authenticated policy, no token)",
+    );
+
+    // ── Batch envelope-malformed → 400 (L5 fix) ─────────────────────────
+    const rBadBatch = await jsonRequest("POST", "/.well-known/phip/objects/" + NAMESPACE + "/batch", {
+      not_events: [],
+    });
+    assertEqual(rBadBatch.status, 400, "Batch missing 'events' returns 400");
+
+    // ── /meta cache header ──────────────────────────────────────────────
+    const rMetaHead = await new Promise((resolve, reject) => {
+      const url = new URL(base + "/.well-known/phip/meta");
+      const req = http.request({
+        hostname: url.hostname, port: url.port, path: url.pathname, method: "GET",
+      }, (res) => {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("end", () => resolve({ headers: res.headers }));
+      });
+      req.on("error", reject);
+      req.end();
+    });
+    assert(
+      typeof rMetaHead.headers["cache-control"] === "string" &&
+        rMetaHead.headers["cache-control"].includes("max-age"),
+      "/meta sets Cache-Control header",
+    );
+
+    // ── authority_transfer event (§4.6) — appends to actor history ──────
+    // Use the bootstrap key actor as a stand-in for an authority record.
+    const keyHead = (await jsonRequest("GET", "/.well-known/phip/resolve/" + NAMESPACE + "/" + KEY_LOCAL_ID)).body.history_head;
+    const xferEvt = signEvent(buildEvent({
+      eventId: crypto.randomUUID(), phipId: KEY_PHIP_ID, type: "authority_transfer",
+      timestamp: "2026-12-01T00:00:00Z", actor: KEY_PHIP_ID, previousHash: keyHead,
+      payload: {
+        namespaces: [NAMESPACE], successor_authority: "newco.example",
+        successor_root_key: "phip://newco.example/keys/root",
+        effective_from: "2027-01-01T00:00:00Z",
+        rationale: "smoke test",
+      },
+    }), kp.privateKey, KEY_PHIP_ID);
+    const rXfer = await jsonRequest("POST", "/.well-known/phip/push/" + NAMESPACE + "/" + KEY_LOCAL_ID, xferEvt);
+    assertEqual(rXfer.status, 201, "authority_transfer event appended to actor history");
   } finally {
     server.close();
   }
