@@ -2578,9 +2578,9 @@ events one at a time and handle failures itself.
 
 #### 12.5.3 Batch Response
 
-The response is `200 OK` regardless of individual event outcomes 
-(the batch operation itself succeeded — its members may not 
-have). Body:
+The response body shape is the same regardless of individual event 
+outcomes; the HTTP status code reflects the distribution per the 
+table below. Body:
 
 ```json
 {
