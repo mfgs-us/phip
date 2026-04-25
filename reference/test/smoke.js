@@ -649,18 +649,21 @@ async function httpRoundTrip() {
     assertEqual(rNoToken.status, 403, "Authenticated read without token returns 403");
     assertEqual(rNoToken.body.error.code, "MISSING_CAPABILITY", "Surface MISSING_CAPABILITY");
 
-    // With a structurally-valid token (any read scope) → allowed.
-    const tokenAuth = {
-      phip_capability: "1.0",
-      token_id: crypto.randomUUID(),
-      granted_by: KEY_PHIP_ID,
-      granted_to: KEY_PHIP_ID,
-      scope: "read_state",
-      object_filter: "phip://" + AUTHORITY + "/*",
-      not_before: "2026-01-01T00:00:00Z",
-      expires: "2030-01-01T00:00:00Z",
-      signature: { algorithm: "Ed25519", key_id: KEY_PHIP_ID, value: "fake" },
-    };
+    // With a properly Ed25519-signed token (intra-authority key) → allowed.
+    const tokenAuth = signEvent(
+      {
+        phip_capability: "1.0",
+        token_id: crypto.randomUUID(),
+        granted_by: KEY_PHIP_ID,
+        granted_to: KEY_PHIP_ID,
+        scope: "read_state",
+        object_filter: "phip://" + AUTHORITY + "/*",
+        not_before: "2026-01-01T00:00:00Z",
+        expires: "2030-01-01T00:00:00Z",
+      },
+      kp.privateKey,
+      KEY_PHIP_ID,
+    );
     const tokenAuthB64 = Buffer.from(JSON.stringify(tokenAuth), "utf8").toString("base64url");
     const rWithToken = await new Promise((resolve, reject) => {
       const url = new URL(base + "/.well-known/phip/resolve/" + NAMESPACE + "/" + authObjLocal);
@@ -676,6 +679,58 @@ async function httpRoundTrip() {
       req.end();
     });
     assertEqual(rWithToken.status, 200, "Authenticated read with valid-shape token returns 200");
+
+    // Forged token (correct shape, garbage signature value) MUST be rejected.
+    const forgedToken = {
+      ...tokenAuth,
+      token_id: crypto.randomUUID(),
+      signature: { ...tokenAuth.signature, value: Buffer.alloc(64, 0).toString("base64url") },
+    };
+    const forgedB64 = Buffer.from(JSON.stringify(forgedToken), "utf8").toString("base64url");
+    const rForged = await new Promise((resolve, reject) => {
+      const url = new URL(base + "/.well-known/phip/resolve/" + NAMESPACE + "/" + authObjLocal);
+      const req = http.request({
+        hostname: url.hostname, port: url.port, path: url.pathname, method: "GET",
+        headers: { "Authorization": "PhIP-Capability " + forgedB64 },
+      }, (res) => {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("end", () => resolve({ status: res.statusCode, body: data ? JSON.parse(data) : null }));
+      });
+      req.on("error", reject);
+      req.end();
+    });
+    assertEqual(rForged.status, 401, "Forged signature returns 401");
+    assertEqual(rForged.body.error.code, "INVALID_SIGNATURE", "Forged token surfaces INVALID_SIGNATURE");
+
+    // Foreign-authority signing key (key_id at another authority) MUST be
+    // rejected as an unsupported case in v0.1 reference (signature
+    // verification requires foreign-key resolution).
+    const foreignToken = {
+      ...tokenAuth,
+      token_id: crypto.randomUUID(),
+      signature: {
+        algorithm: "Ed25519",
+        key_id: "phip://other-authority.example/keys/whatever",
+        value: tokenAuth.signature.value,
+      },
+    };
+    const foreignB64 = Buffer.from(JSON.stringify(foreignToken), "utf8").toString("base64url");
+    const rForeign = await new Promise((resolve, reject) => {
+      const url = new URL(base + "/.well-known/phip/resolve/" + NAMESPACE + "/" + authObjLocal);
+      const req = http.request({
+        hostname: url.hostname, port: url.port, path: url.pathname, method: "GET",
+        headers: { "Authorization": "PhIP-Capability " + foreignB64 },
+      }, (res) => {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("end", () => resolve({ status: res.statusCode, body: data ? JSON.parse(data) : null }));
+      });
+      req.on("error", reject);
+      req.end();
+    });
+    assertEqual(rForeign.status, 403, "Foreign-key token returns 403");
+    assertEqual(rForeign.body.error.code, "INVALID_CAPABILITY", "Foreign-key token surfaces INVALID_CAPABILITY");
 
     // Public objects accept malformed Authorization header (B1 fix).
     const rPublicWithBadHeader = await new Promise((resolve, reject) => {

@@ -702,6 +702,55 @@ class Store {
     return Math.max(pct, 1e-9);
   }
 
+  // §11.3.4 step 2: verify the capability token's Ed25519 signature.
+  //
+  // This is "Option C" intra-authority verification: signature.key_id is
+  // resolved against THIS resolver's local key store. If the key lives
+  // here, the signature is verified cryptographically. Tokens whose
+  // signing key lives at a foreign authority are REJECTED — full
+  // federation requires outbound HTTPS to fetch foreign keys, which is
+  // deferred to v0.2.
+  //
+  // Tokens that are unsigned, malformed, or signed by a foreign or
+  // expired key all surface INVALID_CAPABILITY (403). Tokens whose
+  // signature does not match the resolved key surface
+  // INVALID_SIGNATURE (401).
+  _verifyCapabilityToken(token) {
+    if (!token || !token.signature || !token.signature.key_id || !token.signature.value) {
+      throw new PhipError("INVALID_CAPABILITY", "Capability token is unsigned");
+    }
+    const keyId = token.signature.key_id;
+    let keyRecord;
+    try {
+      keyRecord = this._resolveKeyRecord(keyId);
+    } catch (e) {
+      if (e instanceof PhipError && e.code === "KEY_EXPIRED") {
+        throw new PhipError(
+          "INVALID_CAPABILITY",
+          "Capability token signing key is not active",
+          { key_id: keyId },
+        );
+      }
+      throw e;
+    }
+    if (!keyRecord) {
+      throw new PhipError(
+        "INVALID_CAPABILITY",
+        "Capability token signing key not resolvable locally — foreign-authority key resolution is deferred to v0.2",
+        { key_id: keyId },
+      );
+    }
+    // Reuse the event verification helper: a token is structurally
+    // identical (sig stripped, JCS, Ed25519 over the canonical bytes).
+    const ok = verifyEvent(token, publicKeyFromBase64Url(keyRecord.x));
+    if (!ok) {
+      throw new PhipError(
+        "INVALID_SIGNATURE",
+        "Capability token signature verification failed",
+      );
+    }
+  }
+
   // §11.5: enforce phip:access policy on read operations.
   //
   // `caller` is the parsed PhIP-Capability token (or null for unauthenticated
@@ -734,6 +783,10 @@ class Store {
     if (!caller || !caller.token) {
       throw new PhipError("MISSING_CAPABILITY", "Read access requires a capability token");
     }
+    // Step 2 of §11.3.4: verify the token's signature. Intra-authority
+    // verification: if signature.key_id resolves locally, verify against
+    // that key. Cross-authority key resolution is deferred to v0.2.
+    this._verifyCapabilityToken(caller.token);
     const token = caller.token;
     if (!token.scope || !token.scope.startsWith("read_")) {
       throw new PhipError(

@@ -54,11 +54,12 @@ function buildPhipId(authority, namespace, localId) {
 // requires a token. This avoids denying access to `public` objects when a
 // client happens to send a stray/malformed Authorization header.
 //
-// v0.1 reference: structural parse + expiry check only. Cryptographic
-// verification of the token's `signature` against the granting authority's
-// key is intentionally NOT performed — it requires resolving foreign keys,
-// which this single-authority reference does not do. Production resolvers
-// MUST add full §11.3.4 verification.
+// Cryptographic verification of the token's signature is performed by
+// store._verifyCapabilityToken once the access check decides the token is
+// needed. Intra-authority tokens (signing key resolves locally) are fully
+// verified per §11.3.4. Tokens whose signing key lives at a foreign
+// authority are rejected with INVALID_CAPABILITY — outbound HTTPS for
+// foreign-key resolution is deferred to v0.2.
 function parseCapabilityHeader(req) {
   const auth = req.headers && req.headers.authorization;
   if (!auth || !auth.startsWith("PhIP-Capability ")) return null;

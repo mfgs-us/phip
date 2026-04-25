@@ -93,19 +93,23 @@ function newEventId() {
 
 // ── HTTP client ──────────────────────────────────────────────────────
 
-function request(method, relPath, body) {
+function request(method, relPath, body, extraHeaders) {
   return new Promise((resolve, reject) => {
     const url = new URL(BASE_URL + relPath);
     const payload = body ? Buffer.from(JSON.stringify(body), "utf8") : null;
     const lib = url.protocol === "https:" ? https : http;
+    const headers = Object.assign(
+      payload
+        ? { "Content-Type": "application/json", "Content-Length": payload.length }
+        : {},
+      extraHeaders || {},
+    );
     const opts = {
       hostname: url.hostname,
       port: url.port || (url.protocol === "https:" ? 443 : 80),
       path: url.pathname + url.search,
       method,
-      headers: payload
-        ? { "Content-Type": "application/json", "Content-Length": payload.length }
-        : {},
+      headers,
     };
     const req = lib.request(opts, (res) => {
       let data = "";
@@ -383,6 +387,478 @@ async function main() {
   test(
     "OBJECT_EXISTS error code",
     r10b.body && r10b.body.error && r10b.body.error.code === "OBJECT_EXISTS"
+  );
+
+  // ── 11. /meta endpoint (§12.7) ────────────────────────────────────
+  console.log(`\n[11] /meta endpoint`);
+  const rMeta = await request("GET", "/.well-known/phip/meta");
+  test("/meta returns 200", rMeta.status === 200);
+  test("/meta has protocol_version", rMeta.body && typeof rMeta.body.protocol_version === "string");
+  test("/meta has authority", rMeta.body && rMeta.body.authority === AUTHORITY);
+  test(
+    "/meta has conformance_class",
+    rMeta.body && typeof rMeta.body.conformance_class === "string",
+  );
+  test(
+    "/meta supported_operations is an array",
+    rMeta.body && Array.isArray(rMeta.body.supported_operations),
+  );
+  test(
+    "/meta sets Cache-Control header",
+    rMeta.headers && typeof rMeta.headers["cache-control"] === "string"
+      && rMeta.headers["cache-control"].includes("max-age"),
+  );
+
+  // ── 12. Batch CREATE — mixed outcomes → 207 ───────────────────────
+  // Skips entire section if the resolver does not advertise batch support.
+  console.log(`\n[12] batch CREATE`);
+  const supportsBatchCreate = rMeta.body && Array.isArray(rMeta.body.supported_operations)
+    && rMeta.body.supported_operations.includes("batch_create");
+  if (!supportsBatchCreate) {
+    console.log("  (skipped — resolver does not advertise batch_create)");
+  } else {
+    const batchCreateEvents = [
+      signEvent({
+        event_id: newEventId(),
+        phip_id: `phip://${AUTHORITY}/${NAMESPACE}/units/batch-A-${RUN_ID}`,
+        type: "created", timestamp: new Date().toISOString(), actor: KEY_PHIP_ID,
+        previous_hash: "genesis",
+        payload: { object_type: "component", state: "concept" },
+      }, KEY_PHIP_ID),
+      signEvent({
+        event_id: newEventId(),
+        phip_id: `phip://${AUTHORITY}/${NAMESPACE}/units/batch-B-${RUN_ID}`,
+        type: "created", timestamp: new Date().toISOString(), actor: KEY_PHIP_ID,
+        previous_hash: "genesis",
+        payload: { object_type: "component", state: "concept" },
+      }, KEY_PHIP_ID),
+      // Duplicate of A — must error.
+      signEvent({
+        event_id: newEventId(),
+        phip_id: `phip://${AUTHORITY}/${NAMESPACE}/units/batch-A-${RUN_ID}`,
+        type: "created", timestamp: new Date().toISOString(), actor: KEY_PHIP_ID,
+        previous_hash: "genesis",
+        payload: { object_type: "component", state: "concept" },
+      }, KEY_PHIP_ID),
+    ];
+    const rBatch = await request("POST", `/.well-known/phip/objects/${NAMESPACE}/batch`, {
+      events: batchCreateEvents,
+    });
+    test("batch with mixed outcomes returns 207", rBatch.status === 207, `got ${rBatch.status}`);
+    test(
+      "batch summary 2 succeeded / 1 failed",
+      rBatch.body && rBatch.body.summary &&
+        rBatch.body.summary.succeeded === 2 && rBatch.body.summary.failed === 1,
+    );
+    test(
+      "batch results carry status field",
+      Array.isArray(rBatch.body && rBatch.body.results) &&
+        rBatch.body.results.every((r) => typeof r.status === "string"),
+    );
+
+    // All-succeed → 200.
+    const allOkEvents = [
+      signEvent({
+        event_id: newEventId(),
+        phip_id: `phip://${AUTHORITY}/${NAMESPACE}/units/batch-C-${RUN_ID}`,
+        type: "created", timestamp: new Date().toISOString(), actor: KEY_PHIP_ID,
+        previous_hash: "genesis",
+        payload: { object_type: "component", state: "concept" },
+      }, KEY_PHIP_ID),
+      signEvent({
+        event_id: newEventId(),
+        phip_id: `phip://${AUTHORITY}/${NAMESPACE}/units/batch-D-${RUN_ID}`,
+        type: "created", timestamp: new Date().toISOString(), actor: KEY_PHIP_ID,
+        previous_hash: "genesis",
+        payload: { object_type: "component", state: "concept" },
+      }, KEY_PHIP_ID),
+    ];
+    const rAllOk = await request("POST", `/.well-known/phip/objects/${NAMESPACE}/batch`, {
+      events: allOkEvents,
+    });
+    test("batch with all successes returns 200", rAllOk.status === 200, `got ${rAllOk.status}`);
+
+    // Malformed envelope → 400.
+    const rMalformed = await request("POST", `/.well-known/phip/objects/${NAMESPACE}/batch`, {
+      not_events: [],
+    });
+    test("batch with malformed envelope returns 400", rMalformed.status === 400, `got ${rMalformed.status}`);
+  }
+
+  // ── 13. design type + instance_of constraint (§6.2, §6.3) ─────────
+  console.log(`\n[13] design type and instance_of`);
+  const DESIGN_LOCAL = `designs/widget-r1-${RUN_ID}`;
+  const DESIGN_PHIP = `phip://${AUTHORITY}/${NAMESPACE}/${DESIGN_LOCAL}`;
+  const designEvt = signEvent({
+    event_id: newEventId(), phip_id: DESIGN_PHIP, type: "created",
+    timestamp: new Date().toISOString(), actor: KEY_PHIP_ID, previous_hash: "genesis",
+    payload: {
+      object_type: "design", state: "qualified",
+      identity: { part_number: `WGT-${RUN_ID}`, revision: "A" },
+    },
+  }, KEY_PHIP_ID);
+  const rDesign = await request("POST", OBJECTS(NAMESPACE), designEvt);
+  test("design CREATE returns 201", rDesign.status === 201, `got ${rDesign.status}`);
+
+  // instance_of must target a design — pointing at the actor (key) MUST fail.
+  const badInstEvt = signEvent({
+    event_id: newEventId(),
+    phip_id: `phip://${AUTHORITY}/${NAMESPACE}/units/bad-inst-${RUN_ID}`,
+    type: "created", timestamp: new Date().toISOString(), actor: KEY_PHIP_ID,
+    previous_hash: "genesis",
+    payload: {
+      object_type: "component", state: "concept",
+      relations: [{ type: "instance_of", phip_id: KEY_PHIP_ID }],
+    },
+  }, KEY_PHIP_ID);
+  const rBadInst = await request("POST", OBJECTS(NAMESPACE), badInstEvt);
+  test(
+    "instance_of pointing at actor returns 422",
+    rBadInst.status === 422,
+    `got ${rBadInst.status}`,
+  );
+  test(
+    "instance_of constraint surfaces INVALID_RELATION",
+    rBadInst.body && rBadInst.body.error && rBadInst.body.error.code === "INVALID_RELATION",
+  );
+
+  // instance_of pointing at a valid design — must succeed.
+  const goodInstEvt = signEvent({
+    event_id: newEventId(),
+    phip_id: `phip://${AUTHORITY}/${NAMESPACE}/units/good-inst-${RUN_ID}`,
+    type: "created", timestamp: new Date().toISOString(), actor: KEY_PHIP_ID,
+    previous_hash: "genesis",
+    payload: {
+      object_type: "component", state: "stock",
+      relations: [{ type: "instance_of", phip_id: DESIGN_PHIP }],
+    },
+  }, KEY_PHIP_ID);
+  const rGoodInst = await request("POST", OBJECTS(NAMESPACE), goodInstEvt);
+  test(
+    "instance_of pointing at a design is accepted",
+    rGoodInst.status === 201,
+    `got ${rGoodInst.status}`,
+  );
+
+  // ── 14. DANGLING_RELATION (§7.4) ──────────────────────────────────
+  console.log(`\n[14] DANGLING_RELATION`);
+  const danglingCreateEvt = signEvent({
+    event_id: newEventId(),
+    phip_id: `phip://${AUTHORITY}/${NAMESPACE}/units/dangling-${RUN_ID}`,
+    type: "created", timestamp: new Date().toISOString(), actor: KEY_PHIP_ID,
+    previous_hash: "genesis",
+    payload: {
+      object_type: "component", state: "stock",
+      relations: [{
+        type: "contains",
+        phip_id: `phip://${AUTHORITY}/${NAMESPACE}/parts/does-not-exist-${RUN_ID}`,
+      }],
+    },
+  }, KEY_PHIP_ID);
+  const rDangCreate = await request("POST", OBJECTS(NAMESPACE), danglingCreateEvt);
+  test(
+    "same-authority dangling relation on CREATE returns 422",
+    rDangCreate.status === 422,
+    `got ${rDangCreate.status}`,
+  );
+  test(
+    "DANGLING_RELATION error code",
+    rDangCreate.body && rDangCreate.body.error && rDangCreate.body.error.code === "DANGLING_RELATION",
+  );
+
+  // Cross-authority targets MUST be accepted (§7.4 — verified lazily by readers).
+  const crossAuthEvt = signEvent({
+    event_id: newEventId(),
+    phip_id: `phip://${AUTHORITY}/${NAMESPACE}/units/cross-auth-${RUN_ID}`,
+    type: "created", timestamp: new Date().toISOString(), actor: KEY_PHIP_ID,
+    previous_hash: "genesis",
+    payload: {
+      object_type: "component", state: "stock",
+      relations: [{ type: "contains", phip_id: "phip://other-authority.example/parts/anything" }],
+    },
+  }, KEY_PHIP_ID);
+  const rCrossAuth = await request("POST", OBJECTS(NAMESPACE), crossAuthEvt);
+  test(
+    "cross-authority relation target accepted on CREATE",
+    rCrossAuth.status === 201,
+    `got ${rCrossAuth.status}`,
+  );
+
+  // ── 15. yield_fraction sum (§10.4.1) ──────────────────────────────
+  console.log(`\n[15] yield_fraction`);
+  // Need a stock lot to use as process input.
+  const STOCK_LOCAL = `lots/stock-${RUN_ID}`;
+  const STOCK_PHIP = `phip://${AUTHORITY}/${NAMESPACE}/${STOCK_LOCAL}`;
+  const stockEvt = signEvent({
+    event_id: newEventId(), phip_id: STOCK_PHIP, type: "created",
+    timestamp: new Date().toISOString(), actor: KEY_PHIP_ID, previous_hash: "genesis",
+    payload: { object_type: "lot", state: "stock", identity: { fungible: true } },
+  }, KEY_PHIP_ID);
+  await request("POST", OBJECTS(NAMESPACE), stockEvt);
+  const stockHead = (await request("GET", RESOLVE(NAMESPACE, STOCK_LOCAL))).body.history_head;
+
+  const badYieldEvt = signEvent({
+    event_id: newEventId(), phip_id: STOCK_PHIP, type: "process",
+    timestamp: new Date().toISOString(), actor: KEY_PHIP_ID, previous_hash: stockHead,
+    payload: {
+      process_type: "test_overshoot",
+      inputs: [{ phip_id: STOCK_PHIP, consumed: false }],
+      outputs: [
+        { phip_id: `phip://${AUTHORITY}/${NAMESPACE}/lots/out-1-${RUN_ID}`, yield_fraction: 0.7 },
+        { phip_id: `phip://${AUTHORITY}/${NAMESPACE}/lots/out-2-${RUN_ID}`, yield_fraction: 0.5 },
+      ],
+    },
+  }, KEY_PHIP_ID);
+  const rBadYield = await request("POST", PUSH(NAMESPACE, STOCK_LOCAL), badYieldEvt);
+  test("yield_fraction sum > 1 returns 422", rBadYield.status === 422, `got ${rBadYield.status}`);
+  test(
+    "yield_fraction overshoot is INVALID_EVENT",
+    rBadYield.body && rBadYield.body.error && rBadYield.body.error.code === "INVALID_EVENT",
+  );
+
+  const goodYieldEvt = signEvent({
+    event_id: newEventId(), phip_id: STOCK_PHIP, type: "process",
+    timestamp: new Date().toISOString(), actor: KEY_PHIP_ID, previous_hash: stockHead,
+    payload: {
+      process_type: "split_evenly",
+      inputs: [{ phip_id: STOCK_PHIP, consumed: false }],
+      outputs: [
+        { phip_id: `phip://${AUTHORITY}/${NAMESPACE}/lots/outA-${RUN_ID}`, yield_fraction: 0.6 },
+        { phip_id: `phip://${AUTHORITY}/${NAMESPACE}/lots/outB-${RUN_ID}`, yield_fraction: 0.4 },
+      ],
+    },
+  }, KEY_PHIP_ID);
+  const rGoodYield = await request("POST", PUSH(NAMESPACE, STOCK_LOCAL), goodYieldEvt);
+  test("yield_fraction sum = 1.0 accepted", rGoodYield.status === 201, `got ${rGoodYield.status}`);
+
+  // ── 16. lot mass conservation (§10.5.1) ───────────────────────────
+  console.log(`\n[16] lot mass conservation`);
+  const LOT_LOCAL = `lots/grain-${RUN_ID}`;
+  const LOT_PHIP = `phip://${AUTHORITY}/${NAMESPACE}/${LOT_LOCAL}`;
+  const lotEvt = signEvent({
+    event_id: newEventId(), phip_id: LOT_PHIP, type: "created",
+    timestamp: new Date().toISOString(), actor: KEY_PHIP_ID, previous_hash: "genesis",
+    payload: {
+      object_type: "lot", state: "stock",
+      identity: { fungible: true, quantity: { value: 1000, unit: "kg" } },
+    },
+  }, KEY_PHIP_ID);
+  await request("POST", OBJECTS(NAMESPACE), lotEvt);
+  const lotHead = (await request("GET", RESOLVE(NAMESPACE, LOT_LOCAL))).body.history_head;
+
+  const badSplitEvt = signEvent({
+    event_id: newEventId(), phip_id: LOT_PHIP, type: "lot_split",
+    timestamp: new Date().toISOString(), actor: KEY_PHIP_ID, previous_hash: lotHead,
+    payload: {
+      reason: "test_overshoot",
+      resulting_lots: [
+        { phip_id: `phip://${AUTHORITY}/${NAMESPACE}/lots/grain-${RUN_ID}-A`, quantity_kg: 700 },
+        { phip_id: `phip://${AUTHORITY}/${NAMESPACE}/lots/grain-${RUN_ID}-B`, quantity_kg: 500 },
+      ],
+    },
+  }, KEY_PHIP_ID);
+  const rBadSplit = await request("POST", PUSH(NAMESPACE, LOT_LOCAL), badSplitEvt);
+  test("lot_split mass overshoot returns 422", rBadSplit.status === 422, `got ${rBadSplit.status}`);
+
+  const goodSplitEvt = signEvent({
+    event_id: newEventId(), phip_id: LOT_PHIP, type: "lot_split",
+    timestamp: new Date().toISOString(), actor: KEY_PHIP_ID, previous_hash: lotHead,
+    payload: {
+      reason: "test_within_tolerance",
+      resulting_lots: [
+        { phip_id: `phip://${AUTHORITY}/${NAMESPACE}/lots/grain-${RUN_ID}-X`, quantity_kg: 600 },
+        { phip_id: `phip://${AUTHORITY}/${NAMESPACE}/lots/grain-${RUN_ID}-Y`, quantity_kg: 400 },
+      ],
+    },
+  }, KEY_PHIP_ID);
+  const rGoodSplit = await request("POST", PUSH(NAMESPACE, LOT_LOCAL), goodSplitEvt);
+  test(
+    "lot_split with sum = source accepted",
+    rGoodSplit.status === 201,
+    `got ${rGoodSplit.status}`,
+  );
+
+  // ── 17. measurement payload (§11.4.2) ─────────────────────────────
+  console.log(`\n[17] measurement payload`);
+  // Need a target object (stock lot from §15 already exists).
+  const m1Head = (await request("GET", RESOLVE(NAMESPACE, STOCK_LOCAL))).body.history_head;
+  const goodMeasEvt = signEvent({
+    event_id: newEventId(), phip_id: STOCK_PHIP, type: "measurement",
+    timestamp: new Date().toISOString(), actor: KEY_PHIP_ID, previous_hash: m1Head,
+    payload: { metric: "moisture_pct", value: 12.4, unit: "%", as_of: "2026-07-10T00:00:00Z" },
+  }, KEY_PHIP_ID);
+  const rGoodMeas = await request("POST", PUSH(NAMESPACE, STOCK_LOCAL), goodMeasEvt);
+  test("well-formed measurement accepted", rGoodMeas.status === 201, `got ${rGoodMeas.status}`);
+
+  const m2Head = (await request("GET", RESOLVE(NAMESPACE, STOCK_LOCAL))).body.history_head;
+  const badMeasEvt = signEvent({
+    event_id: newEventId(), phip_id: STOCK_PHIP, type: "measurement",
+    timestamp: new Date().toISOString(), actor: KEY_PHIP_ID, previous_hash: m2Head,
+    payload: { value: 12.4 }, // missing metric, as_of
+  }, KEY_PHIP_ID);
+  const rBadMeas = await request("POST", PUSH(NAMESPACE, STOCK_LOCAL), badMeasEvt);
+  test("measurement missing fields returns 422", rBadMeas.status === 422, `got ${rBadMeas.status}`);
+
+  // ── 18. phip:access (§11.5) ───────────────────────────────────────
+  console.log(`\n[18] phip:access`);
+
+  // Object with policy=private — GET returns ACCESS_DENIED.
+  const PRIV_LOCAL = `units/private-${RUN_ID}`;
+  const PRIV_PHIP = `phip://${AUTHORITY}/${NAMESPACE}/${PRIV_LOCAL}`;
+  const privEvt = signEvent({
+    event_id: newEventId(), phip_id: PRIV_PHIP, type: "created",
+    timestamp: new Date().toISOString(), actor: KEY_PHIP_ID, previous_hash: "genesis",
+    payload: {
+      object_type: "component", state: "stock",
+      attributes: { "phip:access": { policy: "private" } },
+    },
+  }, KEY_PHIP_ID);
+  await request("POST", OBJECTS(NAMESPACE), privEvt);
+  const rPrivGet = await request("GET", RESOLVE(NAMESPACE, PRIV_LOCAL));
+  test("private GET returns 403", rPrivGet.status === 403, `got ${rPrivGet.status}`);
+  test(
+    "private GET surfaces ACCESS_DENIED",
+    rPrivGet.body && rPrivGet.body.error && rPrivGet.body.error.code === "ACCESS_DENIED",
+  );
+
+  // Object with policy=authenticated — no token → MISSING_CAPABILITY.
+  const AUTH_LOCAL = `units/auth-${RUN_ID}`;
+  const AUTH_PHIP = `phip://${AUTHORITY}/${NAMESPACE}/${AUTH_LOCAL}`;
+  const authEvt = signEvent({
+    event_id: newEventId(), phip_id: AUTH_PHIP, type: "created",
+    timestamp: new Date().toISOString(), actor: KEY_PHIP_ID, previous_hash: "genesis",
+    payload: {
+      object_type: "component", state: "stock",
+      attributes: { "phip:access": { policy: "authenticated" } },
+    },
+  }, KEY_PHIP_ID);
+  await request("POST", OBJECTS(NAMESPACE), authEvt);
+  const rAuthNoToken = await request("GET", RESOLVE(NAMESPACE, AUTH_LOCAL));
+  test("authenticated GET no token returns 403", rAuthNoToken.status === 403, `got ${rAuthNoToken.status}`);
+  test(
+    "authenticated GET no token surfaces MISSING_CAPABILITY",
+    rAuthNoToken.body && rAuthNoToken.body.error && rAuthNoToken.body.error.code === "MISSING_CAPABILITY",
+  );
+
+  // Same object with a structurally-valid token → 200.
+  // (Cryptographic verification is implementation-specific; the conformance
+  // suite does not exercise foreign-key resolution. Resolvers that require
+  // signature verification beyond shape checking will reject this and the
+  // assertion will fail — that is intentional. The token's `granted_by` and
+  // `key_id` reference KEY_PHIP_ID which is registered in this resolver, so
+  // a single-authority resolver that verifies signatures against locally
+  // resolvable keys can pass. If yours doesn't, sign the token correctly.)
+  const tokenObj = {
+    phip_capability: "1.0",
+    token_id: newEventId(),
+    granted_by: KEY_PHIP_ID,
+    granted_to: KEY_PHIP_ID,
+    scope: "read_state",
+    object_filter: `phip://${AUTHORITY}/*`,
+    not_before: "2020-01-01T00:00:00Z",
+    expires: "2099-01-01T00:00:00Z",
+  };
+  const tokenForSig = { ...tokenObj };
+  const tokenSigBytes = crypto.sign(null, canonicalBytes(tokenForSig), privateKey);
+  tokenObj.signature = {
+    algorithm: "Ed25519",
+    key_id: KEY_PHIP_ID,
+    value: tokenSigBytes.toString("base64url"),
+  };
+  const tokenB64 = Buffer.from(JSON.stringify(tokenObj), "utf8").toString("base64url");
+  const rAuthWithToken = await request(
+    "GET",
+    RESOLVE(NAMESPACE, AUTH_LOCAL),
+    null,
+    { Authorization: `PhIP-Capability ${tokenB64}` },
+  );
+  test(
+    "authenticated GET with valid token returns 200",
+    rAuthWithToken.status === 200,
+    `got ${rAuthWithToken.status}`,
+  );
+
+  // Forged token — correct shape but garbage signature. §11.3.4 step 2
+  // mandates signature verification, so this MUST be rejected.
+  const forgedToken = {
+    ...tokenObj,
+    token_id: newEventId(),
+    signature: {
+      algorithm: "Ed25519",
+      key_id: KEY_PHIP_ID,
+      value: Buffer.alloc(64, 0).toString("base64url"),
+    },
+  };
+  const forgedB64 = Buffer.from(JSON.stringify(forgedToken), "utf8").toString("base64url");
+  const rForged = await request(
+    "GET",
+    RESOLVE(NAMESPACE, AUTH_LOCAL),
+    null,
+    { Authorization: `PhIP-Capability ${forgedB64}` },
+  );
+  test(
+    "forged token signature returns 4xx (not 200)",
+    rForged.status >= 400 && rForged.status < 500,
+    `got ${rForged.status}`,
+  );
+  test(
+    "forged token surfaces INVALID_SIGNATURE or INVALID_CAPABILITY",
+    rForged.body && rForged.body.error &&
+      (rForged.body.error.code === "INVALID_SIGNATURE" ||
+       rForged.body.error.code === "INVALID_CAPABILITY"),
+  );
+
+  // Public object with a malformed Authorization header — must succeed
+  // (a stray malformed header MUST NOT deny access on a public object).
+  const rPubBadHeader = await request(
+    "GET",
+    RESOLVE(NAMESPACE, OBJ_LOCAL_ID),
+    null,
+    { Authorization: "PhIP-Capability not-a-token" },
+  );
+  test(
+    "public GET with malformed Authorization still 200",
+    rPubBadHeader.status === 200,
+    `got ${rPubBadHeader.status}`,
+  );
+
+  // QUERY silently omits restricted objects (§11.5.3).
+  const rQueryAfter = await request("POST", QUERY(NAMESPACE), {
+    filters: { object_type: "component" },
+  });
+  test(
+    "QUERY omits restricted (private) object",
+    rQueryAfter.body && Array.isArray(rQueryAfter.body.matches)
+      && !rQueryAfter.body.matches.includes(PRIV_PHIP),
+  );
+  test(
+    "QUERY omits restricted (authenticated, no token) object",
+    rQueryAfter.body && Array.isArray(rQueryAfter.body.matches)
+      && !rQueryAfter.body.matches.includes(AUTH_PHIP),
+  );
+
+  // ── 19. authority_transfer event (§4.6) ───────────────────────────
+  console.log(`\n[19] authority_transfer`);
+  // Append to the bootstrap actor's history. Resolvers need not implement
+  // transfer mechanics for this to pass; they just need to accept the
+  // event type into a chain.
+  const bootHead = (await request("GET", RESOLVE(NAMESPACE, KEY_LOCAL_ID))).body.history_head;
+  const xferEvt = signEvent({
+    event_id: newEventId(), phip_id: KEY_PHIP_ID, type: "authority_transfer",
+    timestamp: new Date().toISOString(), actor: KEY_PHIP_ID, previous_hash: bootHead,
+    payload: {
+      namespaces: [NAMESPACE],
+      successor_authority: "newco.example",
+      successor_root_key: "phip://newco.example/keys/root",
+      effective_from: "2099-01-01T00:00:00Z",
+      rationale: "conformance suite test",
+    },
+  }, KEY_PHIP_ID);
+  const rXfer = await request("POST", PUSH(NAMESPACE, KEY_LOCAL_ID), xferEvt);
+  test(
+    "authority_transfer event appended to actor history",
+    rXfer.status === 201,
+    `got ${rXfer.status}`,
   );
 
   // ── summary ───────────────────────────────────────────────────────
