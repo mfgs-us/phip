@@ -389,30 +389,39 @@ async function main() {
     r10b.body && r10b.body.error && r10b.body.error.code === "OBJECT_EXISTS"
   );
 
-  // ── 11. /meta endpoint (§12.7) ────────────────────────────────────
+  // ── 11. /meta endpoint (§12.7 — OPTIONAL) ─────────────────────────
+  // Spec: "A resolver that does not publish /meta is still conformant."
+  // We assert shape only when the resolver opts in. A 404 (or any non-200)
+  // means the resolver elected not to publish; the entire §11/§12 block
+  // becomes informational.
   console.log(`\n[11] /meta endpoint`);
   const rMeta = await request("GET", "/.well-known/phip/meta");
-  test("/meta returns 200", rMeta.status === 200);
-  test("/meta has protocol_version", rMeta.body && typeof rMeta.body.protocol_version === "string");
-  test("/meta has authority", rMeta.body && rMeta.body.authority === AUTHORITY);
-  test(
-    "/meta has conformance_class",
-    rMeta.body && typeof rMeta.body.conformance_class === "string",
-  );
-  test(
-    "/meta supported_operations is an array",
-    rMeta.body && Array.isArray(rMeta.body.supported_operations),
-  );
-  test(
-    "/meta sets Cache-Control header",
-    rMeta.headers && typeof rMeta.headers["cache-control"] === "string"
-      && rMeta.headers["cache-control"].includes("max-age"),
-  );
+  const metaPublished = rMeta.status === 200 && rMeta.body && typeof rMeta.body === "object";
+  if (!metaPublished) {
+    console.log("  (skipped — resolver does not publish /meta, which is OPTIONAL per §12.7)");
+  } else {
+    test("/meta returns 200", rMeta.status === 200);
+    test("/meta has protocol_version", typeof rMeta.body.protocol_version === "string");
+    test("/meta has authority", rMeta.body.authority === AUTHORITY);
+    test(
+      "/meta has conformance_class",
+      typeof rMeta.body.conformance_class === "string",
+    );
+    test(
+      "/meta supported_operations is an array",
+      Array.isArray(rMeta.body.supported_operations),
+    );
+    test(
+      "/meta sets Cache-Control header",
+      rMeta.headers && typeof rMeta.headers["cache-control"] === "string"
+        && rMeta.headers["cache-control"].includes("max-age"),
+    );
+  }
 
   // ── 12. Batch CREATE — mixed outcomes → 207 ───────────────────────
   // Skips entire section if the resolver does not advertise batch support.
   console.log(`\n[12] batch CREATE`);
-  const supportsBatchCreate = rMeta.body && Array.isArray(rMeta.body.supported_operations)
+  const supportsBatchCreate = metaPublished && Array.isArray(rMeta.body.supported_operations)
     && rMeta.body.supported_operations.includes("batch_create");
   if (!supportsBatchCreate) {
     console.log("  (skipped — resolver does not advertise batch_create)");
@@ -755,7 +764,7 @@ async function main() {
     granted_to: KEY_PHIP_ID,
     scope: "read_state",
     object_filter: `phip://${AUTHORITY}/*`,
-    not_before: "2020-01-01T00:00:00Z",
+    not_before: "2026-01-15T00:00:00Z",
     expires: "2099-01-01T00:00:00Z",
   };
   const tokenForSig = { ...tokenObj };
@@ -806,6 +815,88 @@ async function main() {
     rForged.body && rForged.body.error &&
       (rForged.body.error.code === "INVALID_SIGNATURE" ||
        rForged.body.error.code === "INVALID_CAPABILITY"),
+  );
+
+  // Expired token MUST be rejected (§11.3.4 step 3).
+  const expiredToken = {
+    phip_capability: "1.0",
+    token_id: newEventId(),
+    granted_by: KEY_PHIP_ID,
+    granted_to: KEY_PHIP_ID,
+    scope: "read_state",
+    object_filter: `phip://${AUTHORITY}/*`,
+    not_before: "2026-01-15T00:00:00Z",
+    expires: "2026-04-01T00:00:00Z",
+  };
+  const expiredSig = crypto.sign(null, canonicalBytes(expiredToken), privateKey);
+  expiredToken.signature = {
+    algorithm: "Ed25519",
+    key_id: KEY_PHIP_ID,
+    value: expiredSig.toString("base64url"),
+  };
+  const expiredB64 = Buffer.from(JSON.stringify(expiredToken), "utf8").toString("base64url");
+  const rExpired = await request(
+    "GET",
+    RESOLVE(NAMESPACE, AUTH_LOCAL),
+    null,
+    { Authorization: `PhIP-Capability ${expiredB64}` },
+  );
+  test(
+    "expired token returns 4xx",
+    rExpired.status >= 400 && rExpired.status < 500,
+    `got ${rExpired.status}`,
+  );
+  test(
+    "expired token surfaces INVALID_CAPABILITY",
+    rExpired.body && rExpired.body.error && rExpired.body.error.code === "INVALID_CAPABILITY",
+  );
+
+  // object_filter mismatch — token is valid but for a different object.
+  const wrongFilterToken = {
+    phip_capability: "1.0",
+    token_id: newEventId(),
+    granted_by: KEY_PHIP_ID,
+    granted_to: KEY_PHIP_ID,
+    scope: "read_state",
+    object_filter: "phip://other.example/*",
+    not_before: "2026-01-15T00:00:00Z",
+    expires: "2099-01-01T00:00:00Z",
+  };
+  const wrongFilterSig = crypto.sign(null, canonicalBytes(wrongFilterToken), privateKey);
+  wrongFilterToken.signature = {
+    algorithm: "Ed25519",
+    key_id: KEY_PHIP_ID,
+    value: wrongFilterSig.toString("base64url"),
+  };
+  const wrongFilterB64 = Buffer.from(JSON.stringify(wrongFilterToken), "utf8").toString("base64url");
+  const rWrongFilter = await request(
+    "GET",
+    RESOLVE(NAMESPACE, AUTH_LOCAL),
+    null,
+    { Authorization: `PhIP-Capability ${wrongFilterB64}` },
+  );
+  test(
+    "object_filter mismatch returns 4xx",
+    rWrongFilter.status >= 400 && rWrongFilter.status < 500,
+    `got ${rWrongFilter.status}`,
+  );
+  test(
+    "object_filter mismatch surfaces INVALID_CAPABILITY",
+    rWrongFilter.body && rWrongFilter.body.error && rWrongFilter.body.error.code === "INVALID_CAPABILITY",
+  );
+
+  // read_state token MUST NOT cover history (which requires read_history).
+  // tokenObj from above has scope=read_state.
+  const rHistoryWithReadState = await request(
+    "GET",
+    HISTORY(NAMESPACE, AUTH_LOCAL),
+    null,
+    { Authorization: `PhIP-Capability ${tokenB64}` },
+  );
+  test(
+    "read_state token cannot read history",
+    rHistoryWithReadState.status === 403,
+    `got ${rHistoryWithReadState.status}`,
   );
 
   // Public object with a malformed Authorization header — must succeed
