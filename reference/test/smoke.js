@@ -362,6 +362,161 @@ async function httpRoundTrip() {
     const r7 = await jsonRequest("GET", "/.well-known/phip/resolve/" + NAMESPACE + "/does/not/exist");
     assertEqual(r7.status, 404, "HTTP GET missing object returns 404");
     assertEqual(r7.body.error.code, "OBJECT_NOT_FOUND", "HTTP GET missing object has OBJECT_NOT_FOUND code");
+
+    // /meta endpoint (§12.7).
+    const rMeta = await jsonRequest("GET", "/.well-known/phip/meta");
+    assertEqual(rMeta.status, 200, "HTTP /meta returns 200");
+    assertEqual(rMeta.body.protocol_version, "0.1.0-draft", "/meta protocol_version");
+    assertEqual(rMeta.body.authority, AUTHORITY, "/meta authority");
+    assertEqual(rMeta.body.conformance_class, "full", "/meta conformance_class=full");
+    assert(
+      Array.isArray(rMeta.body.supported_operations) &&
+        rMeta.body.supported_operations.includes("batch_create") &&
+        rMeta.body.supported_operations.includes("batch_push"),
+      "/meta advertises batch operations",
+    );
+    assert(
+      Array.isArray(rMeta.body.schema_namespaces) &&
+        rMeta.body.schema_namespaces.includes("phip:mechanical@1.0"),
+      "/meta advertises schema_namespaces with versions",
+    );
+
+    // Batch CREATE — 3 events, one duplicate (expect 207 Multi-Status).
+    const batchEvents = [
+      signEvent(buildEvent({
+        eventId: crypto.randomUUID(),
+        phipId: "phip://" + AUTHORITY + "/" + NAMESPACE + "/units/batch-A",
+        type: "created", timestamp: "2026-02-01T00:00:00Z", actor: KEY_PHIP_ID,
+        previousHash: "genesis",
+        payload: { object_type: "component", state: "concept" },
+      }), kp.privateKey, KEY_PHIP_ID),
+      signEvent(buildEvent({
+        eventId: crypto.randomUUID(),
+        phipId: "phip://" + AUTHORITY + "/" + NAMESPACE + "/units/batch-B",
+        type: "created", timestamp: "2026-02-01T00:00:01Z", actor: KEY_PHIP_ID,
+        previousHash: "genesis",
+        payload: { object_type: "component", state: "concept" },
+      }), kp.privateKey, KEY_PHIP_ID),
+      // Duplicate of batch-A — should fail with OBJECT_EXISTS.
+      signEvent(buildEvent({
+        eventId: crypto.randomUUID(),
+        phipId: "phip://" + AUTHORITY + "/" + NAMESPACE + "/units/batch-A",
+        type: "created", timestamp: "2026-02-01T00:00:02Z", actor: KEY_PHIP_ID,
+        previousHash: "genesis",
+        payload: { object_type: "component", state: "concept" },
+      }), kp.privateKey, KEY_PHIP_ID),
+    ];
+    const rBatch = await jsonRequest(
+      "POST",
+      "/.well-known/phip/objects/" + NAMESPACE + "/batch",
+      { events: batchEvents },
+    );
+    assertEqual(rBatch.status, 207, "Batch CREATE with mixed outcomes returns 207");
+    assertEqual(rBatch.body.summary.succeeded, 2, "Batch summary: 2 succeeded");
+    assertEqual(rBatch.body.summary.failed, 1, "Batch summary: 1 failed");
+    assertEqual(rBatch.body.results[0].status, "created", "Batch result[0] created");
+    assertEqual(rBatch.body.results[2].status, "error", "Batch result[2] error");
+    assertEqual(rBatch.body.results[2].error.code, "OBJECT_EXISTS", "Batch error code is OBJECT_EXISTS");
+
+    // Design object + instance_of constraint (§6.3).
+    const DESIGN_LOCAL = "designs/widget-r1";
+    const DESIGN_PHIP = "phip://" + AUTHORITY + "/" + NAMESPACE + "/" + DESIGN_LOCAL;
+    const designEvt = signEvent(buildEvent({
+      eventId: crypto.randomUUID(),
+      phipId: DESIGN_PHIP,
+      type: "created", timestamp: "2026-03-01T00:00:00Z", actor: KEY_PHIP_ID,
+      previousHash: "genesis",
+      payload: {
+        object_type: "design", state: "qualified",
+        identity: { part_number: "WGT-001", revision: "A" },
+      },
+    }), kp.privateKey, KEY_PHIP_ID);
+    const rDesign = await jsonRequest("POST", "/.well-known/phip/objects/" + NAMESPACE, designEvt);
+    assertEqual(rDesign.status, 201, "design CREATE returns 201");
+
+    // instance_of pointing at a non-design — must be rejected (INVALID_RELATION).
+    const badInstanceEvt = signEvent(buildEvent({
+      eventId: crypto.randomUUID(),
+      phipId: "phip://" + AUTHORITY + "/" + NAMESPACE + "/units/bad-inst",
+      type: "created", timestamp: "2026-03-02T00:00:00Z", actor: KEY_PHIP_ID,
+      previousHash: "genesis",
+      payload: {
+        object_type: "component", state: "concept",
+        relations: [{ type: "instance_of", phip_id: KEY_PHIP_ID }], // key is actor, not design
+      },
+    }), kp.privateKey, KEY_PHIP_ID);
+    const rBadInst = await jsonRequest("POST", "/.well-known/phip/objects/" + NAMESPACE, badInstanceEvt);
+    assertEqual(rBadInst.status, 422, "instance_of pointing at actor returns 422");
+    assertEqual(rBadInst.body.error.code, "INVALID_RELATION", "instance_of must target design (INVALID_RELATION)");
+
+    // DANGLING_RELATION on relation_added pointing at a missing same-authority object (§7.4).
+    // First need an existing object to push to. Use units/batch-A (created in batch above).
+    const existingHead = (await jsonRequest("GET", "/.well-known/phip/resolve/" + NAMESPACE + "/units/batch-A")).body.history_head;
+    const danglingEvt = signEvent(buildEvent({
+      eventId: crypto.randomUUID(),
+      phipId: "phip://" + AUTHORITY + "/" + NAMESPACE + "/units/batch-A",
+      type: "relation_added", timestamp: "2026-04-01T00:00:00Z", actor: KEY_PHIP_ID,
+      previousHash: existingHead,
+      payload: { relation: { type: "contains", phip_id: "phip://" + AUTHORITY + "/" + NAMESPACE + "/nope/missing" } },
+    }), kp.privateKey, KEY_PHIP_ID);
+    const rDangling = await jsonRequest(
+      "POST",
+      "/.well-known/phip/push/" + NAMESPACE + "/units/batch-A",
+      danglingEvt,
+    );
+    assertEqual(rDangling.status, 422, "DANGLING_RELATION returns 422");
+    assertEqual(rDangling.body.error.code, "DANGLING_RELATION", "Dangling same-authority relation rejected with DANGLING_RELATION");
+
+    // phip:access enforcement — set policy=private and verify GET is denied.
+    const restrictEvt = signEvent(buildEvent({
+      eventId: crypto.randomUUID(),
+      phipId: "phip://" + AUTHORITY + "/" + NAMESPACE + "/units/batch-B",
+      type: "attribute_update", timestamp: "2026-05-01T00:00:00Z", actor: KEY_PHIP_ID,
+      previousHash: (await jsonRequest("GET", "/.well-known/phip/resolve/" + NAMESPACE + "/units/batch-B")).body.history_head,
+      payload: { namespace: "phip:access", updates: { policy: "private", rationale: "smoke test" } },
+    }), kp.privateKey, KEY_PHIP_ID);
+    const rRestrict = await jsonRequest(
+      "POST",
+      "/.well-known/phip/push/" + NAMESPACE + "/units/batch-B",
+      restrictEvt,
+    );
+    assertEqual(rRestrict.status, 201, "Setting phip:access=private accepted");
+    const rRestrictedGet = await jsonRequest("GET", "/.well-known/phip/resolve/" + NAMESPACE + "/units/batch-B");
+    assertEqual(rRestrictedGet.status, 403, "Private object GET returns 403");
+    assertEqual(rRestrictedGet.body.error.code, "ACCESS_DENIED", "Private GET surfaces ACCESS_DENIED");
+
+    // Lot mass conservation (§10.5.1) — split with sum > source must be rejected.
+    const LOT_LOCAL = "lots/grain-001";
+    const LOT_PHIP = "phip://" + AUTHORITY + "/" + NAMESPACE + "/" + LOT_LOCAL;
+    const lotEvt = signEvent(buildEvent({
+      eventId: crypto.randomUUID(),
+      phipId: LOT_PHIP,
+      type: "created", timestamp: "2026-06-01T00:00:00Z", actor: KEY_PHIP_ID,
+      previousHash: "genesis",
+      payload: {
+        object_type: "lot", state: "stock",
+        identity: { fungible: true, quantity: { value: 1000, unit: "kg" } },
+      },
+    }), kp.privateKey, KEY_PHIP_ID);
+    await jsonRequest("POST", "/.well-known/phip/objects/" + NAMESPACE, lotEvt);
+
+    const lotHead = (await jsonRequest("GET", "/.well-known/phip/resolve/" + NAMESPACE + "/" + LOT_LOCAL)).body.history_head;
+    const badSplitEvt = signEvent(buildEvent({
+      eventId: crypto.randomUUID(),
+      phipId: LOT_PHIP,
+      type: "lot_split", timestamp: "2026-06-02T00:00:00Z", actor: KEY_PHIP_ID,
+      previousHash: lotHead,
+      payload: {
+        reason: "test_overshoot",
+        resulting_lots: [
+          { phip_id: "phip://" + AUTHORITY + "/" + NAMESPACE + "/lots/grain-001-A", quantity_kg: 700 },
+          { phip_id: "phip://" + AUTHORITY + "/" + NAMESPACE + "/lots/grain-001-B", quantity_kg: 500 },
+        ],
+      },
+    }), kp.privateKey, KEY_PHIP_ID);
+    const rBadSplit = await jsonRequest("POST", "/.well-known/phip/push/" + NAMESPACE + "/" + LOT_LOCAL, badSplitEvt);
+    assertEqual(rBadSplit.status, 422, "Mass-violating lot_split returns 422");
+    assertEqual(rBadSplit.body.error.code, "INVALID_EVENT", "Mass conservation violation surfaces INVALID_EVENT");
   } finally {
     server.close();
   }

@@ -12,6 +12,7 @@ const MANUFACTURING_TYPES = new Set([
   "assembly",
   "system",
   "lot",
+  "design",
 ]);
 
 const OPERATIONAL_TYPES = new Set(["actor", "location", "vehicle"]);
