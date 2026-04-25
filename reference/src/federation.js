@@ -38,6 +38,7 @@ const { URL } = require("node:url");
 const DEFAULT_TTL_MS = 5 * 60 * 1000;       // 5 min
 const MAX_TTL_MS = 24 * 60 * 60 * 1000;     // 24 h ceiling on foreign-set max-age
 const REQUEST_TIMEOUT_MS = 10_000;
+const MAX_RESPONSE_BYTES = 1_048_576;       // 1 MiB cap on foreign responses
 
 class FederationClient {
   constructor({
@@ -118,19 +119,28 @@ class FederationClient {
       throw new Error("Refusing to fetch over HTTP");
     }
 
-    // Resolve hostname → IP. If hostname is already an IP, dns.lookup
-    // returns it as-is. Reject IPs in private ranges unless allowed.
+    // Resolve hostname → IPs. If hostname is already an IP, dns.lookup
+    // returns it as-is. We use `all: true` and reject if ANY returned
+    // address is private — defends against multi-A records that mix
+    // public and private targets to bypass the filter.
     const port = parseInt(u.port, 10) || (u.protocol === "https:" ? 443 : 80);
-    let resolvedAddress;
+    let lookupResults;
     try {
-      const lookup = await dns.lookup(u.hostname, { all: false });
-      resolvedAddress = lookup.address;
+      lookupResults = await dns.lookup(u.hostname, { all: true });
     } catch (e) {
       throw new Error("DNS resolution failed for federation target");
     }
-    if (!this.allowPrivateAddresses && isPrivateAddress(resolvedAddress)) {
-      throw new Error("Refusing to connect to private/loopback/link-local address");
+    if (!lookupResults.length) {
+      throw new Error("DNS resolution returned no addresses");
     }
+    if (!this.allowPrivateAddresses) {
+      for (const r of lookupResults) {
+        if (isPrivateAddress(r.address)) {
+          throw new Error("Refusing to connect to private/loopback/link-local address");
+        }
+      }
+    }
+    const resolvedAddress = lookupResults[0].address;
 
     return new Promise((resolve, reject) => {
       const lib = u.protocol === "https:" ? https : http;
@@ -149,9 +159,21 @@ class FederationClient {
         },
         (res) => {
           let data = "";
+          let bytes = 0;
+          let oversize = false;
           res.setEncoding("utf8");
-          res.on("data", (c) => (data += c));
+          res.on("data", (c) => {
+            if (oversize) return;
+            bytes += Buffer.byteLength(c, "utf8");
+            if (bytes > MAX_RESPONSE_BYTES) {
+              oversize = true;
+              req.destroy(new Error("Federation response exceeded size cap"));
+              return;
+            }
+            data += c;
+          });
           res.on("end", () => {
+            if (oversize) return; // already rejected via destroy
             if (res.statusCode !== 200) {
               return reject(new Error(`Federation GET returned status ${res.statusCode}`));
             }
@@ -229,15 +251,17 @@ function isPrivateIPv6(addr) {
   if (a === "::1") return true;
   // Unspecified ::
   if (a === "::") return true;
-  // Link-local fe80::/10
-  if (a.startsWith("fe80:") || a.startsWith("fe9") || a.startsWith("fea") || a.startsWith("feb")) return true;
-  // Unique local fc00::/7
-  if (a.startsWith("fc") || a.startsWith("fd")) return true;
   // IPv4-mapped IPv6 — extract and recheck
   const v4mapped = /^::ffff:([0-9.]+)$/i.exec(a);
   if (v4mapped) return isPrivateIPv4(v4mapped[1]);
-  // Multicast ff00::/8
-  if (a.startsWith("ff")) return true;
+  // Link-local fe80::/10 — covers fe80:: through febf::. Match exactly
+  // 4-char first hextets (canonical RFC 5952 form for fe80–febf, since
+  // those values won't have suppressible leading zeros).
+  if (/^fe[89ab][0-9a-f]:/.test(a)) return true;
+  // Unique local fc00::/7 — covers fc00:: through fdff::.
+  if (/^f[cd][0-9a-f][0-9a-f]:/.test(a)) return true;
+  // Multicast ff00::/8 — covers ff00:: through ffff::.
+  if (/^ff[0-9a-f][0-9a-f]:/.test(a)) return true;
   return false;
 }
 
