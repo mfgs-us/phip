@@ -702,15 +702,81 @@ class Store {
     return Math.max(pct, 1e-9);
   }
 
+  // §11.3.4 step 2: verify the capability token's Ed25519 signature.
+  //
+  // This is "Option C" intra-authority verification: signature.key_id is
+  // resolved against THIS resolver's local key store. If the key lives
+  // here, the signature is verified cryptographically. Tokens whose
+  // signing key lives at a foreign authority are REJECTED — full
+  // federation requires outbound HTTPS to fetch foreign keys, which is
+  // deferred to v0.2.
+  //
+  // Tokens that are unsigned, malformed, or signed by a foreign or
+  // expired key all surface INVALID_CAPABILITY (403). Tokens whose
+  // signature does not match the resolved key surface
+  // INVALID_SIGNATURE (401).
+  _verifyCapabilityToken(token) {
+    if (!token || !token.signature || !token.signature.key_id || !token.signature.value) {
+      throw new PhipError("INVALID_CAPABILITY", "Capability token is unsigned");
+    }
+    const keyId = token.signature.key_id;
+    let keyRecord;
+    try {
+      keyRecord = this._resolveKeyRecord(keyId);
+    } catch (e) {
+      if (e instanceof PhipError && e.code === "KEY_EXPIRED") {
+        throw new PhipError(
+          "INVALID_CAPABILITY",
+          "Capability token signing key is not active",
+          { key_id: keyId },
+        );
+      }
+      throw e;
+    }
+    if (!keyRecord) {
+      throw new PhipError(
+        "INVALID_CAPABILITY",
+        "Capability token signing key not resolvable locally — foreign-authority key resolution is deferred to v0.2",
+        { key_id: keyId },
+      );
+    }
+    // §11.2.2: signing key MUST be within its validity window at signature
+    // time. Tokens have no `timestamp`, so `not_before` (the earliest moment
+    // the token claims to be valid) is the signing-time anchor — this
+    // rejects tokens whose claimed validity starts before the signing key
+    // was provisioned. Falls back to `now` when the token has no
+    // `not_before`.
+    const signingAnchor = token.not_before || new Date().toISOString();
+    try {
+      this._checkKeyValidity(keyRecord, signingAnchor);
+    } catch (e) {
+      if (e instanceof PhipError && e.code === "KEY_EXPIRED") {
+        throw new PhipError(
+          "INVALID_CAPABILITY",
+          "Capability token signing key is outside its validity window",
+          { key_id: keyId, anchor: signingAnchor },
+        );
+      }
+      throw e;
+    }
+    // Reuse the event verification helper: a token is structurally
+    // identical (sig stripped, JCS, Ed25519 over the canonical bytes).
+    const ok = verifyEvent(token, publicKeyFromBase64Url(keyRecord.x));
+    if (!ok) {
+      throw new PhipError(
+        "INVALID_SIGNATURE",
+        "Capability token signature verification failed",
+      );
+    }
+  }
+
   // §11.5: enforce phip:access policy on read operations.
   //
   // `caller` is the parsed PhIP-Capability token (or null for unauthenticated
-  // requests). Token cryptographic verification — checking the signature
-  // against the granting authority's key — is OUT OF SCOPE for the v0.1
-  // reference because it requires resolving foreign authority keys, which
-  // this resolver does not yet do. Tokens are accepted on structural validity
-  // and expiry only. Production resolvers MUST add cryptographic verification
-  // per §11.3.4.
+  // requests). Token cryptographic verification runs in
+  // `_verifyCapabilityToken` — for v0.1 reference, only intra-authority
+  // signing keys are verified; foreign-authority key resolution is deferred
+  // to v0.2 (PR #8 / §11.3.4 step 2 full federation).
   _enforceReadAccess(record, caller, requestedScope) {
     const access = record.attributes && record.attributes["phip:access"];
     const policy = (access && access.policy) || "public";
@@ -735,6 +801,54 @@ class Store {
       throw new PhipError("MISSING_CAPABILITY", "Read access requires a capability token");
     }
     const token = caller.token;
+
+    // Verification follows §11.3.4 step order:
+    //   2. signature
+    //   3. validity window (not_before / expires)
+    //   4. granted_to matches caller (only meaningful when caller is
+    //      authenticated externally — the reference can't tell, so this
+    //      check is currently a no-op; see §11.5 capability policy)
+    //   5. object_filter
+    //   6. scope
+
+    // Step 2: signature.
+    this._verifyCapabilityToken(token);
+
+    // Step 3: validity window.
+    const now = Date.now();
+    if (token.not_before && Date.parse(token.not_before) > now) {
+      throw new PhipError("INVALID_CAPABILITY", "Capability token not yet valid");
+    }
+    if (token.expires && Date.parse(token.expires) < now) {
+      throw new PhipError("INVALID_CAPABILITY", "Capability token has expired");
+    }
+
+    // Step 4: granted_to vs caller. The reference identifies callers only
+    // via the token they present, so `caller.actor === token.granted_to`
+    // by construction — the check is structurally present for production
+    // drop-in (mTLS or signed request would set
+    // `actor_authenticated_externally`) but currently a no-op.
+    if (
+      policy === "capability" &&
+      caller.actor_authenticated_externally &&
+      token.granted_to !== caller.actor
+    ) {
+      throw new PhipError(
+        "ACCESS_DENIED",
+        "Capability token granted_to does not match the requesting actor",
+      );
+    }
+
+    // Step 5: object_filter.
+    if (token.object_filter && !this._globMatch(record.phip_id, token.object_filter)) {
+      throw new PhipError(
+        "INVALID_CAPABILITY",
+        "Capability token object_filter does not match this object",
+      );
+    }
+
+    // Step 6: scope. read_history covers read_state; read_query covers
+    // QUERY only.
     if (!token.scope || !token.scope.startsWith("read_")) {
       throw new PhipError(
         "INVALID_CAPABILITY",
@@ -742,7 +856,6 @@ class Store {
         { presented_scope: token.scope },
       );
     }
-    // read_history covers read_state. read_query covers QUERY only.
     const allowed =
       token.scope === requestedScope ||
       (requestedScope === "read_state" && token.scope === "read_history");
@@ -751,36 +864,6 @@ class Store {
         "INVALID_CAPABILITY",
         "Capability token scope '" + token.scope + "' does not cover requested operation '" + requestedScope + "'",
       );
-    }
-    // Object filter check.
-    if (token.object_filter && !this._globMatch(record.phip_id, token.object_filter)) {
-      throw new PhipError(
-        "INVALID_CAPABILITY",
-        "Capability token object_filter does not match this object",
-      );
-    }
-    // Expiry check.
-    const now = Date.now();
-    if (token.not_before && Date.parse(token.not_before) > now) {
-      throw new PhipError("INVALID_CAPABILITY", "Capability token not yet valid");
-    }
-    if (token.expires && Date.parse(token.expires) < now) {
-      throw new PhipError("INVALID_CAPABILITY", "Capability token has expired");
-    }
-    // §11.5.2 step 7: if policy is `capability`, granted_to MUST match the
-    // requesting actor. The reference resolver derives `caller.actor` from
-    // the token's own granted_to (parseCapabilityHeader), so this check is
-    // *currently* tautological — production resolvers identify the caller
-    // via mTLS or signed request, then compare against granted_to. We
-    // keep the check shape so the production drop-in is small, and skip
-    // it when the actor was derived from the token.
-    if (policy === "capability" && caller.actor_authenticated_externally) {
-      if (token.granted_to !== caller.actor) {
-        throw new PhipError(
-          "ACCESS_DENIED",
-          "Capability token granted_to does not match the requesting actor",
-        );
-      }
     }
   }
 
