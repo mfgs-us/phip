@@ -1,0 +1,15 @@
+{
+  "description": "Fixed Ed25519 test keypairs in PKCS#8 DER (base64) and raw-32-byte (base64url) form. Implementations SHOULD load the private key from PKCS#8 DER and derive the public key from the raw 32 bytes.",
+  "keys": [
+    {
+      "id": "test-key-alice",
+      "private_pkcs8_b64": "MC4CAQAwBQYDK2VwBCIEILYVuTR2efrX2+iRiMd6EmrgZNMaFhxPi8HpoS/N7PUh",
+      "public_raw_b64url": "-PMJVmvQQLw38uBOg3w4CXVk6CkadzUozxMUTzq96Ws"
+    },
+    {
+      "id": "test-key-bob",
+      "private_pkcs8_b64": "MC4CAQAwBQYDK2VwBCIEICzx/gACRv1KqpfCPNBGxWTqJ/Opc+SqwDEk5L+qEdCY",
+      "public_raw_b64url": "lO6Idw5fAiglC574c3jennZmmUNhgaUoUzhx6K-D6MQ"
+    }
+  ]
+}

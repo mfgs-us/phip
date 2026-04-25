@@ -1,0 +1,155 @@
+{
+  "description": "RFC 8785 JCS canonicalization cases. For each case, `canonical` is the expected string output and `canonical_bytes_hex` is its UTF-8 encoding in hex. Implementations MUST produce byte-identical output.",
+  "cases": [
+    {
+      "name": "empty-object",
+      "description": "Empty JSON object.",
+      "input": {},
+      "canonical": "{}",
+      "canonical_bytes_hex": "7b7d",
+      "canonical_byte_length": 2
+    },
+    {
+      "name": "empty-array",
+      "description": "Empty JSON array.",
+      "input": [],
+      "canonical": "[]",
+      "canonical_bytes_hex": "5b5d",
+      "canonical_byte_length": 2
+    },
+    {
+      "name": "key-ordering",
+      "description": "Keys MUST be emitted in sorted code-point order, regardless of input order.",
+      "input": {
+        "c": 3,
+        "a": 1,
+        "b": 2
+      },
+      "canonical": "{\"a\":1,\"b\":2,\"c\":3}",
+      "canonical_bytes_hex": "7b2261223a312c2262223a322c2263223a337d",
+      "canonical_byte_length": 19
+    },
+    {
+      "name": "nested-ordering",
+      "description": "Sorting applies recursively to nested objects.",
+      "input": {
+        "outer": {
+          "z": 1,
+          "a": 2
+        },
+        "alpha": {
+          "c": 3,
+          "b": 4
+        }
+      },
+      "canonical": "{\"alpha\":{\"b\":4,\"c\":3},\"outer\":{\"a\":2,\"z\":1}}",
+      "canonical_bytes_hex": "7b22616c706861223a7b2262223a342c2263223a337d2c226f75746572223a7b2261223a322c227a223a317d7d",
+      "canonical_byte_length": 45
+    },
+    {
+      "name": "unicode-values",
+      "description": "Non-ASCII strings are encoded as UTF-8. Code points below 0x20 are escaped; printable code points are emitted literally.",
+      "input": {
+        "greeting": "héllo",
+        "emoji": "🧠",
+        "cjk": "日本語"
+      },
+      "canonical": "{\"cjk\":\"日本語\",\"emoji\":\"🧠\",\"greeting\":\"héllo\"}",
+      "canonical_bytes_hex": "7b22636a6b223a22e697a5e69cace8aa9e222c22656d6f6a69223a22f09fa7a0222c226772656574696e67223a2268c3a96c6c6f227d",
+      "canonical_byte_length": 54
+    },
+    {
+      "name": "unicode-keys",
+      "description": "Keys are sorted by UTF-16 code unit, like ECMAScript.",
+      "input": {
+        "é": 1,
+        "a": 2,
+        "z": 3
+      },
+      "canonical": "{\"a\":2,\"z\":3,\"é\":1}",
+      "canonical_bytes_hex": "7b2261223a322c227a223a332c22c3a9223a317d",
+      "canonical_byte_length": 20
+    },
+    {
+      "name": "escapes",
+      "description": "Mandatory JSON string escapes.",
+      "input": {
+        "s": "line1\nline2\t\"quoted\"\\backslash"
+      },
+      "canonical": "{\"s\":\"line1\\nline2\\t\\\"quoted\\\"\\\\backslash\"}",
+      "canonical_bytes_hex": "7b2273223a226c696e65315c6e6c696e65325c745c2271756f7465645c225c5c6261636b736c617368227d",
+      "canonical_byte_length": 43
+    },
+    {
+      "name": "numbers-integers",
+      "description": "Integers are emitted without fractional part.",
+      "input": {
+        "zero": 0,
+        "pos": 42,
+        "neg": -17,
+        "big": 2147483647
+      },
+      "canonical": "{\"big\":2147483647,\"neg\":-17,\"pos\":42,\"zero\":0}",
+      "canonical_bytes_hex": "7b22626967223a323134373438333634372c226e6567223a2d31372c22706f73223a34322c227a65726f223a307d",
+      "canonical_byte_length": 46
+    },
+    {
+      "name": "numbers-floats",
+      "description": "Floating-point uses ECMAScript Number.prototype.toString — shortest round-trip form.",
+      "input": {
+        "half": 0.5,
+        "pi": 3.14159,
+        "sci": 1e+21
+      },
+      "canonical": "{\"half\":0.5,\"pi\":3.14159,\"sci\":1e+21}",
+      "canonical_bytes_hex": "7b2268616c66223a302e352c227069223a332e31343135392c22736369223a31652b32317d",
+      "canonical_byte_length": 37
+    },
+    {
+      "name": "booleans-and-null",
+      "description": "true/false/null literals.",
+      "input": {
+        "t": true,
+        "f": false,
+        "n": null
+      },
+      "canonical": "{\"f\":false,\"n\":null,\"t\":true}",
+      "canonical_bytes_hex": "7b2266223a66616c73652c226e223a6e756c6c2c2274223a747275657d",
+      "canonical_byte_length": 29
+    },
+    {
+      "name": "mixed-array",
+      "description": "Array order MUST be preserved (unlike object keys).",
+      "input": [
+        3,
+        1,
+        2,
+        {
+          "b": 2,
+          "a": 1
+        }
+      ],
+      "canonical": "[3,1,2,{\"a\":1,\"b\":2}]",
+      "canonical_bytes_hex": "5b332c312c322c7b2261223a312c2262223a327d5d",
+      "canonical_byte_length": 21
+    },
+    {
+      "name": "deep-nesting",
+      "description": "Multiple levels of nesting still produce stable output.",
+      "input": {
+        "a": {
+          "b": {
+            "c": {
+              "d": {
+                "e": "leaf"
+              }
+            }
+          }
+        }
+      },
+      "canonical": "{\"a\":{\"b\":{\"c\":{\"d\":{\"e\":\"leaf\"}}}}}",
+      "canonical_bytes_hex": "7b2261223a7b2262223a7b2263223a7b2264223a7b2265223a226c656166227d7d7d7d7d",
+      "canonical_byte_length": 36
+    }
+  ]
+}

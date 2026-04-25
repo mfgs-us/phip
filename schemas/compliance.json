@@ -56,9 +56,42 @@
           "status": {
             "type": "string",
             "enum": ["valid", "expired", "revoked", "suspended"]
+          },
+          "jurisdiction": {
+            "type": "string",
+            "description": "Regulatory jurisdiction in which the certification is recognized. ISO 3166-1 alpha-2 country code (e.g. 'US', 'DE'), ISO 3166-2 subdivision code (e.g. 'US-CA'), or a recognized supranational code ('EU', 'UNECE'). Use 'GLOBAL' for worldwide-recognized certifications."
+          },
+          "regulatory_authority": {
+            "type": "string",
+            "description": "Name or PhIP URI of the regulatory body whose authority is invoked (e.g. 'FAA', 'FDA', 'EASA', 'phip://faa.gov/agency')."
           }
         },
         "required": ["standard"]
+      }
+    },
+    "applicable_jurisdictions": {
+      "type": "array",
+      "description": "Jurisdictions in which this object MAY be deployed, sold, or operated under its current certifications. Useful for regulated goods (medical devices, aircraft parts, food) where deployment outside the listed jurisdictions is non-compliant.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "export_control": {
+      "type": "object",
+      "description": "Export control classification, if applicable.",
+      "properties": {
+        "regime": {
+          "type": "string",
+          "description": "Export control regime (e.g. 'EAR', 'ITAR', 'EU dual-use')."
+        },
+        "classification": {
+          "type": "string",
+          "description": "Classification code under that regime (e.g. 'EAR99', 'ECCN 5A002', 'ITAR cat. XII')."
+        },
+        "license_number": {
+          "type": "string",
+          "description": "Issued export license number, if any."
+        }
       }
     },
     "life_limit_hours": {

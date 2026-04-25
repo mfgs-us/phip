@@ -1,0 +1,426 @@
+{
+  "description": "Manufacturing track state transitions per Section 9.2.1. Applies to object types: material, component, assembly, system, lot.",
+  "object_types": [
+    "material",
+    "component",
+    "assembly",
+    "system",
+    "lot"
+  ],
+  "states": [
+    "concept",
+    "design",
+    "prototype",
+    "qualified",
+    "stock",
+    "deployed",
+    "maintained",
+    "decommissioned",
+    "consumed",
+    "disposed"
+  ],
+  "terminal_states": [
+    "consumed",
+    "disposed"
+  ],
+  "transitions": {
+    "concept": [
+      "design"
+    ],
+    "design": [
+      "prototype",
+      "qualified"
+    ],
+    "prototype": [
+      "design",
+      "qualified"
+    ],
+    "qualified": [
+      "stock",
+      "consumed"
+    ],
+    "stock": [
+      "deployed",
+      "decommissioned",
+      "consumed"
+    ],
+    "deployed": [
+      "maintained",
+      "decommissioned"
+    ],
+    "maintained": [
+      "deployed",
+      "decommissioned"
+    ],
+    "decommissioned": [
+      "consumed",
+      "disposed"
+    ],
+    "consumed": [],
+    "disposed": []
+  },
+  "valid": [
+    {
+      "from": "concept",
+      "to": "design"
+    },
+    {
+      "from": "design",
+      "to": "prototype"
+    },
+    {
+      "from": "design",
+      "to": "qualified"
+    },
+    {
+      "from": "prototype",
+      "to": "design"
+    },
+    {
+      "from": "prototype",
+      "to": "qualified"
+    },
+    {
+      "from": "qualified",
+      "to": "stock"
+    },
+    {
+      "from": "qualified",
+      "to": "consumed"
+    },
+    {
+      "from": "stock",
+      "to": "deployed"
+    },
+    {
+      "from": "stock",
+      "to": "decommissioned"
+    },
+    {
+      "from": "stock",
+      "to": "consumed"
+    },
+    {
+      "from": "deployed",
+      "to": "maintained"
+    },
+    {
+      "from": "deployed",
+      "to": "decommissioned"
+    },
+    {
+      "from": "maintained",
+      "to": "deployed"
+    },
+    {
+      "from": "maintained",
+      "to": "decommissioned"
+    },
+    {
+      "from": "decommissioned",
+      "to": "consumed"
+    },
+    {
+      "from": "decommissioned",
+      "to": "disposed"
+    }
+  ],
+  "invalid": [
+    {
+      "from": "concept",
+      "to": "prototype"
+    },
+    {
+      "from": "concept",
+      "to": "qualified"
+    },
+    {
+      "from": "concept",
+      "to": "stock"
+    },
+    {
+      "from": "concept",
+      "to": "deployed"
+    },
+    {
+      "from": "concept",
+      "to": "maintained"
+    },
+    {
+      "from": "concept",
+      "to": "decommissioned"
+    },
+    {
+      "from": "concept",
+      "to": "consumed"
+    },
+    {
+      "from": "concept",
+      "to": "disposed"
+    },
+    {
+      "from": "design",
+      "to": "concept"
+    },
+    {
+      "from": "design",
+      "to": "stock"
+    },
+    {
+      "from": "design",
+      "to": "deployed"
+    },
+    {
+      "from": "design",
+      "to": "maintained"
+    },
+    {
+      "from": "design",
+      "to": "decommissioned"
+    },
+    {
+      "from": "design",
+      "to": "consumed"
+    },
+    {
+      "from": "design",
+      "to": "disposed"
+    },
+    {
+      "from": "prototype",
+      "to": "concept"
+    },
+    {
+      "from": "prototype",
+      "to": "stock"
+    },
+    {
+      "from": "prototype",
+      "to": "deployed"
+    },
+    {
+      "from": "prototype",
+      "to": "maintained"
+    },
+    {
+      "from": "prototype",
+      "to": "decommissioned"
+    },
+    {
+      "from": "prototype",
+      "to": "consumed"
+    },
+    {
+      "from": "prototype",
+      "to": "disposed"
+    },
+    {
+      "from": "qualified",
+      "to": "concept"
+    },
+    {
+      "from": "qualified",
+      "to": "design"
+    },
+    {
+      "from": "qualified",
+      "to": "prototype"
+    },
+    {
+      "from": "qualified",
+      "to": "deployed"
+    },
+    {
+      "from": "qualified",
+      "to": "maintained"
+    },
+    {
+      "from": "qualified",
+      "to": "decommissioned"
+    },
+    {
+      "from": "qualified",
+      "to": "disposed"
+    },
+    {
+      "from": "stock",
+      "to": "concept"
+    },
+    {
+      "from": "stock",
+      "to": "design"
+    },
+    {
+      "from": "stock",
+      "to": "prototype"
+    },
+    {
+      "from": "stock",
+      "to": "qualified"
+    },
+    {
+      "from": "stock",
+      "to": "maintained"
+    },
+    {
+      "from": "stock",
+      "to": "disposed"
+    },
+    {
+      "from": "deployed",
+      "to": "concept"
+    },
+    {
+      "from": "deployed",
+      "to": "design"
+    },
+    {
+      "from": "deployed",
+      "to": "prototype"
+    },
+    {
+      "from": "deployed",
+      "to": "qualified"
+    },
+    {
+      "from": "deployed",
+      "to": "stock"
+    },
+    {
+      "from": "deployed",
+      "to": "consumed"
+    },
+    {
+      "from": "deployed",
+      "to": "disposed"
+    },
+    {
+      "from": "maintained",
+      "to": "concept"
+    },
+    {
+      "from": "maintained",
+      "to": "design"
+    },
+    {
+      "from": "maintained",
+      "to": "prototype"
+    },
+    {
+      "from": "maintained",
+      "to": "qualified"
+    },
+    {
+      "from": "maintained",
+      "to": "stock"
+    },
+    {
+      "from": "maintained",
+      "to": "consumed"
+    },
+    {
+      "from": "maintained",
+      "to": "disposed"
+    },
+    {
+      "from": "decommissioned",
+      "to": "concept"
+    },
+    {
+      "from": "decommissioned",
+      "to": "design"
+    },
+    {
+      "from": "decommissioned",
+      "to": "prototype"
+    },
+    {
+      "from": "decommissioned",
+      "to": "qualified"
+    },
+    {
+      "from": "decommissioned",
+      "to": "stock"
+    },
+    {
+      "from": "decommissioned",
+      "to": "deployed"
+    },
+    {
+      "from": "decommissioned",
+      "to": "maintained"
+    },
+    {
+      "from": "consumed",
+      "to": "concept"
+    },
+    {
+      "from": "consumed",
+      "to": "design"
+    },
+    {
+      "from": "consumed",
+      "to": "prototype"
+    },
+    {
+      "from": "consumed",
+      "to": "qualified"
+    },
+    {
+      "from": "consumed",
+      "to": "stock"
+    },
+    {
+      "from": "consumed",
+      "to": "deployed"
+    },
+    {
+      "from": "consumed",
+      "to": "maintained"
+    },
+    {
+      "from": "consumed",
+      "to": "decommissioned"
+    },
+    {
+      "from": "consumed",
+      "to": "disposed"
+    },
+    {
+      "from": "disposed",
+      "to": "concept"
+    },
+    {
+      "from": "disposed",
+      "to": "design"
+    },
+    {
+      "from": "disposed",
+      "to": "prototype"
+    },
+    {
+      "from": "disposed",
+      "to": "qualified"
+    },
+    {
+      "from": "disposed",
+      "to": "stock"
+    },
+    {
+      "from": "disposed",
+      "to": "deployed"
+    },
+    {
+      "from": "disposed",
+      "to": "maintained"
+    },
+    {
+      "from": "disposed",
+      "to": "decommissioned"
+    },
+    {
+      "from": "disposed",
+      "to": "consumed"
+    }
+  ]
+}

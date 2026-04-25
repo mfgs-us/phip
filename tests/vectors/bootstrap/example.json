@@ -1,0 +1,34 @@
+{
+  "description": "Self-signed bootstrap key registration per Section 11.2.4. The object being created is an actor whose phip:keys attribute contains the public key used to sign the event itself. Verifiers MUST accept this pattern only for the `created` event on an actor whose `actor` field equals its own `phip_id`.",
+  "bootstrap_actor_id": "phip://acme.example/keys/alice-bootstrap",
+  "key_id": "test-key-alice",
+  "created_event": {
+    "event_id": "20000000-0000-4000-a000-000000000001",
+    "phip_id": "phip://acme.example/keys/alice-bootstrap",
+    "type": "created",
+    "timestamp": "2026-01-01T00:00:00Z",
+    "actor": "phip://acme.example/keys/alice-bootstrap",
+    "previous_hash": "genesis",
+    "payload": {
+      "object_type": "actor",
+      "state": "active",
+      "identity": {
+        "label": "Alice bootstrap key"
+      },
+      "attributes": {
+        "phip:keys": {
+          "kty": "OKP",
+          "crv": "Ed25519",
+          "x": "-PMJVmvQQLw38uBOg3w4CXVk6CkadzUozxMUTzq96Ws",
+          "not_before": "2026-01-01T00:00:00Z",
+          "not_after": "2030-01-01T00:00:00Z"
+        }
+      }
+    },
+    "signature": {
+      "algorithm": "Ed25519",
+      "key_id": "test-key-alice",
+      "value": "XMxYB9A5XEp-6js_aYHJHBnePVlgD1QA4QNAAzXZtAjOIrDrLdnXI3WEkTwsS1w2wOq3t8OLwg9s46aqtvsfAQ"
+    }
+  }
+}

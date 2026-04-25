@@ -1,0 +1,85 @@
+{
+  "description": "Operational track state transitions per Section 9.3.1. Applies to object types: actor, location, vehicle. Archived objects MAY accept `note` events; all other terminal states reject every event.",
+  "object_types": [
+    "actor",
+    "location",
+    "vehicle"
+  ],
+  "states": [
+    "planned",
+    "active",
+    "inactive",
+    "archived"
+  ],
+  "terminal_states": [
+    "archived"
+  ],
+  "archived_accepts_note": true,
+  "transitions": {
+    "planned": [
+      "active",
+      "archived"
+    ],
+    "active": [
+      "inactive",
+      "archived"
+    ],
+    "inactive": [
+      "active",
+      "archived"
+    ],
+    "archived": []
+  },
+  "valid": [
+    {
+      "from": "planned",
+      "to": "active"
+    },
+    {
+      "from": "planned",
+      "to": "archived"
+    },
+    {
+      "from": "active",
+      "to": "inactive"
+    },
+    {
+      "from": "active",
+      "to": "archived"
+    },
+    {
+      "from": "inactive",
+      "to": "active"
+    },
+    {
+      "from": "inactive",
+      "to": "archived"
+    }
+  ],
+  "invalid": [
+    {
+      "from": "planned",
+      "to": "inactive"
+    },
+    {
+      "from": "active",
+      "to": "planned"
+    },
+    {
+      "from": "inactive",
+      "to": "planned"
+    },
+    {
+      "from": "archived",
+      "to": "planned"
+    },
+    {
+      "from": "archived",
+      "to": "active"
+    },
+    {
+      "from": "archived",
+      "to": "inactive"
+    }
+  ]
+}

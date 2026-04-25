@@ -179,6 +179,13 @@ PhIP URIs are permanent. A URI that has ever identified a PhIP Object MUST
 NOT be reassigned to a different object. A decommissioned or disposed object's 
 URI MUST continue to resolve, returning the object in its terminal state.
 
+Persistence of the URI is independent of persistence of the original 
+authority's DNS record or operational organization. An authority that 
+ceases operation, is acquired, or migrates to a new domain transfers 
+its records via the mechanism in Section 4.6 (Authority Transfer). 
+Section 4.3.3 redirect rules and Section 12.6 metadata `mirror_urls` 
+provide the runtime mechanics for clients to follow such transfers.
+
 ### 4.3 Resolution
 
 A PhIP URI is resolved via the authority's well-known resolver endpoint:
@@ -190,7 +197,87 @@ https://{authority}/.well-known/phip/resolve/{namespace}/{local-id}
 The authority MUST serve this endpoint over HTTPS. Resolution MUST return 
 the full PhIP Object or a standard error response.
 
-[TODO: define resolver discovery, caching headers, redirect behavior]
+#### 4.3.1 Resolver Discovery
+
+The default resolver for a URI `phip://{authority}/...` is reached by:
+
+1. Treating `{authority}` as a DNS name.
+2. Opening an HTTPS connection to that name on port 443.
+3. Requesting the path under `/.well-known/phip/` per RFC 8615.
+
+No additional discovery step is required. Clients MUST NOT perform DNS
+TXT, SRV, or similar lookups to locate a different resolver host — the
+authority name is the resolver's identity, and moving the resolver to a
+different host without keeping the authority name stable would break
+URI persistence (Section 4.2).
+
+An authority MAY publish a metadata document at
+`/.well-known/phip/meta` describing its supported protocol version,
+namespaces, and optional capabilities. The document format is defined in
+Section 12.6. Clients SHOULD fetch this document at most once per
+authority per session and cache it per the HTTP response headers.
+
+#### 4.3.2 Caching
+
+Resolver responses for GET `/resolve/` and GET `/history/` SHOULD include
+standard HTTP cache headers. The resolver SHOULD emit:
+
+- `ETag` — set to the object's current `history_head` for `/resolve/`
+  responses, or to a stable identifier for a committed history page.
+- `Cache-Control: private, max-age={seconds}` — resolver-chosen.
+  Resolvers SHOULD use a short `max-age` (≤ 60 seconds) for objects on
+  the manufacturing or operational track that may still receive events,
+  and MAY use a long `max-age` (days or more) for objects in terminal
+  states (`disposed`, `consumed`, `archived`) since their state cannot
+  change.
+
+Clients SHOULD:
+
+- Send `If-None-Match` with the cached `ETag` on subsequent fetches and
+  treat `304 Not Modified` as a confirmation that the cached projection
+  is current.
+- Invalidate all cached state for an object on any `CHAIN_CONFLICT`
+  received against it (the cached head is stale).
+- Re-verify the hash chain (Section 10.3) whenever the chain head
+  advances; a change of head MUST trigger re-verification from the last
+  verified point rather than from genesis.
+
+Clients MUST NOT cache responses from an untrusted resolver past the
+point where the signing key in `phip:keys` leaves a valid state
+(Section 11.2): a cached projection continues to be a valid snapshot of
+past history, but any new event observed after a key expires or is
+revoked MUST be re-verified against a currently-valid key.
+
+#### 4.3.3 Redirects
+
+Resolvers MAY respond with HTTP `301`, `307`, or `308` to redirect a
+client to a different URL — for example, to route through an internal
+reverse proxy or to steer traffic between replicas.
+
+Clients MUST follow redirects only when the redirect target's authority
+(the `host` component of the `Location` URL) is identical to the
+authority in the requested PhIP URI. A redirect that would change the
+authority MUST be treated as an error, and the client MUST NOT continue
+the request: a cross-authority redirect would silently re-bind a PhIP
+URI to a different organization, which violates URI persistence
+(Section 4.2) and creates a namespace-hijacking vector.
+
+**Exception — authority transfer.** A redirect that crosses authority 
+boundaries is permitted iff it is justified by a verified 
+`authority_transfer` event covering the requested namespace (Section 
+4.6). Resolvers signalling such a redirect SHOULD include a 
+`PhIP-Transfer-Event: <event-id>` header naming the transfer event. 
+Clients MUST resolve and verify the transfer event (per Section 4.6.3) 
+before following the redirect; an unverified transfer header MUST be 
+treated as if absent.
+
+Clients MUST NOT follow `302` redirects on `POST` operations
+(`CREATE`, `PUSH`, `QUERY`). Resolvers that need to redirect writes
+MUST use `307` or `308` so the method and body are preserved.
+
+Clients SHOULD limit redirect chains to five hops and treat longer
+chains as a resolver misconfiguration (surface as a transport-layer
+error, not a PhIP error envelope).
 
 ### 4.4 Sub-Object Addressing
 
@@ -206,12 +293,335 @@ The path structure implies a physical containment relationship, but the
 sub-object MUST also have an explicit `contained_in` relation to its parent 
 for the relationship to be normative. Path structure alone is informational.
 
-[TODO: define whether sub-objects require independent lifecycle states or 
-inherit from parent]
+#### 4.4.1 When to Register a Sub-Object
+
+A sub-part MUST be registered as an independent PhIP object — with its 
+own `phip_id`, event history, lifecycle state, and signing — when **any** 
+of the following holds:
+
+- The sub-part is field-replaceable (it can be removed, swapped, or 
+  installed without destroying the parent).
+- The sub-part has its own provenance trail (manufacturer, lot, 
+  certifications) that needs to be queryable independently.
+- The sub-part can be transferred to a different parent during its 
+  lifetime (e.g. an SSD moving between chassis, a battery moving 
+  between vehicles).
+- The sub-part has its own lifecycle state changes that do not coincide 
+  with the parent (e.g. a port `decommissioned` while the chassis is 
+  still `deployed`).
+
+Examples that MUST be independent objects: SSDs, DIMMs, NICs, line 
+cards, batteries, removable sensors, FRU modules.
+
+A sub-part MAY be modeled as an attribute facet on the parent — with no 
+independent PhIP record — when none of the above holds. In this case 
+the sub-part is part of the parent's object model and changes to it 
+flow through `attribute_update` events on the parent.
+
+Examples that MAY be facets: solder joints, PCB traces, stamped 
+features, integrated (non-removable) components, paint layers.
+
+#### 4.4.2 Lifecycle Independence
+
+Sub-objects that are independent (per 4.4.1) have their **own** 
+lifecycle state. A sub-object MUST NOT inherit state from its parent.
+
+A `decommissioned` chassis MAY contain a `deployed` line card if the 
+operator intends to harvest the line card for reuse. A `disposed` 
+parent does not transitively dispose of its still-physically-present 
+sub-objects; each sub-object's terminal state MUST be recorded by an 
+explicit `state_transition` event on that sub-object.
+
+When a parent object is consumed, decommissioned, or disposed, its 
+sub-objects' `contained_in` relations remain pointing at the parent 
+URI. Section 4.2 (URI persistence) ensures the parent URI continues to 
+resolve.
+
+#### 4.4.3 Path Segment Semantics
+
+URI path segments after the local-id are **purely informational**. They 
+provide a convenient lookup convention but carry no normative weight:
+
+- A sub-object SHOULD be resolvable both by its full path 
+  (`phip://acme.example/servers/srv-042/ports/eth0`) and by the 
+  flattened `phip_id` recorded in its object record. An authority MAY 
+  treat these as the same object or as distinct entries that point at 
+  the same underlying record.
+- The `contained_in` relation, **not** the path, is the source of 
+  truth for parent-child structure. Tools that infer hierarchy from 
+  path segments alone MUST be considered non-conformant.
+- An authority MAY register sub-objects with flat `phip_id`s 
+  (`phip://acme.example/ports/eth0-srv-042`) instead of nested paths. 
+  Both styles are conformant.
 
 ### 4.5 Authority Delegation
 
-[TODO: define how an authority may delegate a sub-namespace to another party]
+An authority MAY delegate a namespace (or a sub-prefix within a 
+namespace) to another party without transferring it. Delegation is 
+useful when a parent organization wants a subsidiary, contractor, or 
+business unit to operate its own slice of the namespace under the 
+parent's URI authority.
+
+Delegation differs from transfer (§4.6): the parent retains 
+ultimate authority and can revoke the delegation, whereas transfer 
+is a permanent cession.
+
+#### 4.5.1 Delegation Mechanism
+
+Delegation is recorded as an entry in the authority's metadata 
+document (§12.6) under a new `delegations` field:
+
+```json
+{
+  "delegations": [
+    {
+      "namespace": "logistics",
+      "prefix": "shipments/eu-",
+      "delegate_authority": "logistics-eu.partner.example",
+      "delegate_root_key": "phip://logistics-eu.partner.example/keys/root",
+      "scope": ["create", "push", "get", "history", "query"],
+      "effective_from": "2026-04-01T00:00:00Z",
+      "expires": "2027-04-01T00:00:00Z"
+    }
+  ]
+}
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `namespace` | MUST | Namespace name being delegated. Use `"*"` to delegate the entire authority (rare; usually transfer is more appropriate) |
+| `prefix` | MAY | Local-id prefix the delegation applies to. If omitted, applies to the entire namespace |
+| `delegate_authority` | MUST | Authority name that operates the delegated slice |
+| `delegate_root_key` | MUST | PhIP URI of the delegate's root key |
+| `scope` | MUST | Operations the delegate may perform: subset of `["create", "push", "get", "history", "query"]` |
+| `effective_from` | MUST | ISO 8601 timestamp the delegation begins |
+| `expires` | MAY | Optional expiry; an absent `expires` indicates an open-ended delegation |
+| `revocable` | MAY | Boolean. If `true`, the parent authority may revoke the delegation by removing the entry from its metadata document. Default `true` |
+
+#### 4.5.2 Resolution Under Delegation
+
+A client resolving `phip://parent.example/{namespace}/{local-id}` 
+SHOULD:
+
+1. Fetch the parent's `/meta` document and check `delegations`.
+2. If a delegation entry matches the requested namespace and 
+   prefix, follow the parent's redirect to the delegate's resolver. 
+   The redirect MUST be accompanied by a `PhIP-Delegation: 
+   <delegation-namespace>` header so the client knows the basis 
+   for the cross-authority redirect.
+3. Verify the delegate's responses by chaining trust from the 
+   parent's root key to the delegate's root key (the delegation 
+   entry in the parent's `/meta` constitutes the trust bridge).
+4. Cache the delegation per `Cache-Control` headers; re-fetch on 
+   `effective_from`/`expires` boundary or on cache invalidation.
+
+The same-authority redirect rule (§4.3.3) is relaxed for verified 
+delegations, by analogy to the transfer exception.
+
+#### 4.5.3 Writes Under Delegation
+
+CREATE and PUSH operations against a delegated slice MUST be sent 
+to the delegate's resolver, not the parent's. The parent's resolver 
+MAY choose to:
+
+- Reject CREATEs in the delegated slice with `FOREIGN_NAMESPACE` 
+  (the delegate is now the owner of that slice).
+- Forward via `307`/`308` redirect to the delegate.
+
+Either is conformant. Authorities SHOULD document their behavior 
+in the `/meta` document.
+
+#### 4.5.4 Revocation
+
+Revocation of a delegation is a metadata change at the parent's 
+`/meta` endpoint: the delegation entry is removed (or has its 
+`expires` shortened to a past time). After revocation:
+
+- New writes to the delegated slice at the delegate's resolver 
+  remain locally valid but are no longer recognized by the parent.
+- Reads SHOULD continue to be served by the delegate for the 
+  pre-revocation history. The parent SHOULD publish mirror URLs 
+  (§4.6.5) covering the revoked slice if the delegate becomes 
+  uncooperative.
+- Hash chains accumulated during the delegation period remain 
+  valid. The parent does not retroactively invalidate the chain — 
+  it just stops accepting new events under the parent's authority 
+  for that slice.
+
+Resolvers SHOULD log delegation revocations and SHOULD make them 
+visible via `/meta` history (an authority's `/meta` document is 
+itself addressable as a PhIP object — its event history records 
+delegation lifecycles).
+
+#### 4.5.5 Sub-Delegation
+
+A delegate MAY further delegate its slice if its root key is used to 
+sign the sub-delegation entry in its own `/meta`. Sub-delegation 
+chains MUST NOT exceed the depth permitted by the original parent. 
+The original parent MAY constrain depth via a `max_subdelegation` 
+field on the delegation entry; absence means unlimited depth, which 
+is RECOMMENDED only for trusted partner relationships.
+
+### 4.6 Authority Transfer
+
+PhIP URIs MUST keep resolving past the operational lifetime of the 
+original authority (Section 4.2). When an authority is acquired, 
+renamed, dissolved, or otherwise becomes unable to host its own 
+resolver, it transfers control of its namespaces to a successor via 
+the mechanism in this section.
+
+This section defines the cryptographic and protocol machinery; 
+governance — who is allowed to declare an authority defunct, how 
+disputes are resolved — is outside the scope of v0.1.
+
+#### 4.6.1 Root Authority Key
+
+Each authority SHOULD provision a **root authority key**: a long-lived 
+Ed25519 keypair held in cold storage and used **only** to sign 
+authority-level events. The root key is distinct from operational 
+signing keys (Section 11.2).
+
+The root key is published as a key resource on the operational track 
+under a well-known local-id:
+
+```
+phip://{authority}/keys/root
+```
+
+The root key resource SHOULD use a long validity window 
+(`not_after` ≥ 10 years from `not_before`) and SHOULD NOT be used to 
+sign individual events. Its purpose is to authorize transfer events 
+and to anchor trust when the authority is no longer reachable.
+
+An authority that does not provision a root key MAY still operate but 
+forfeits the ability to perform a verifiable authority transfer; in 
+practice, its URIs become irrecoverable when the DNS name expires.
+
+#### 4.6.2 The authority_transfer Event
+
+Authority transfer is recorded as a new event type:
+
+| Type | Description |
+|---|---|
+| `authority_transfer` | The authority of one or more namespaces is transferred to a successor. MUST be signed by the source authority's root key |
+
+The event is appended to a special **authority record**:
+
+```
+phip://{authority}/.well-known/authority
+```
+
+This is a PhIP object of type `actor` representing the authority 
+itself. Its history records key rotations, namespace registrations, 
+and any transfer events. The authority record's `created` event MUST 
+be signed by the root key (a self-signed bootstrap, per Section 
+11.2.4 conventions adapted for the authority record).
+
+An `authority_transfer` event payload:
+
+```json
+{
+  "type": "authority_transfer",
+  "payload": {
+    "namespaces": ["parts", "lots", "racks"],
+    "successor_authority": "newco.example",
+    "successor_root_key": "phip://newco.example/keys/root",
+    "effective_from": "2027-01-01T00:00:00Z",
+    "rationale": "Acme acquired by NewCo (2026-12-15). Sole transfer of all asset records."
+  }
+}
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `namespaces` | MUST | Array of namespace strings transferred. MAY be `["*"]` to transfer all namespaces under the authority |
+| `successor_authority` | MUST | Authority name (DNS label) the namespaces transfer to |
+| `successor_root_key` | MUST | PhIP URI of the successor's root key resource. Verifiers MUST resolve and validate this key before accepting subsequent events under the transferred namespaces |
+| `effective_from` | MUST | ISO 8601 timestamp at which the transfer takes effect. Events appended after this timestamp under the transferred namespaces SHOULD be hosted by the successor |
+| `rationale` | SHOULD | Human-readable explanation |
+
+After `effective_from`, GETs to the source authority for objects in 
+the transferred namespaces SHOULD respond with `308 Permanent 
+Redirect` to the successor's URL (Section 4.3.3 same-authority 
+redirect rule is relaxed for transferred objects — see 4.6.4).
+
+#### 4.6.3 Verification
+
+A client receiving an object whose history includes events under both 
+the source and successor authorities MUST verify:
+
+1. The chain is intact across the transfer point (no break in 
+   `previous_hash` continuity).
+2. The transfer event is signed by the source authority's root key.
+3. The source authority's root key was within its validity window at 
+   `effective_from`.
+4. Events appended after `effective_from` under the transferred 
+   namespaces are signed by keys whose chain of trust roots in the 
+   successor's root key.
+5. The transfer event's `successor_authority` matches the authority 
+   serving the post-transfer events.
+
+If any of these checks fail, the client MUST reject the chain as 
+non-authentic. Implementations SHOULD cache root key fingerprints out 
+of band (e.g., trust-on-first-use with explicit pinning for 
+high-stakes deployments) to mitigate the risk of root key compromise.
+
+#### 4.6.4 Redirects After Transfer
+
+The same-authority-only redirect rule in Section 4.3.3 has one 
+exception: a redirect from the source authority to the successor 
+authority is permitted **iff** the response includes (or the client 
+has previously fetched and cached) a valid `authority_transfer` event 
+covering the requested object's namespace.
+
+Resolvers MAY signal a transfer to clients via a 
+`PhIP-Transfer-Event: <event-id>` HTTP header on the redirect, naming 
+the transfer event the redirect is justified by. Clients that have not 
+yet seen this event MUST fetch it from either the source or successor 
+authority record before following the redirect.
+
+#### 4.6.5 Mirrors and Archival
+
+When the source authority is unreachable (DNS expiration, server 
+shutdown), clients fall back to mirrors listed in the successor's 
+metadata document (Section 12.6 `mirror_urls`). A mirror is a 
+read-only host serving a frozen snapshot of the source authority's 
+records as of `effective_from` (or a later snapshot if the source 
+continued to operate post-transfer).
+
+Mirrors MUST serve the snapshot under the source authority's URI 
+namespace (`/.well-known/phip/resolve/{namespace}/{local-id}`) so 
+that hash chains continue to verify byte-for-byte. Mirror responses 
+MUST set `Cache-Control: public, immutable` and SHOULD set a long 
+`max-age` (≥ 1 year), since mirrored data does not change.
+
+A client that retrieves an object from a mirror MUST verify the 
+authority-transfer chain back to the original authority record, not 
+just the local hash chain. This prevents a malicious mirror from 
+serving a forked history.
+
+#### 4.6.6 Multiple Transfers
+
+An authority that has already received transfers MAY transfer 
+namespaces onward. The verification chain extends accordingly: a 
+client validating an object that has passed through three authorities 
+MUST verify two transfer events, each signed by the previous 
+authority's root key. There is no fixed depth limit; resolvers SHOULD 
+limit transfer-chain depth to a configurable maximum (RECOMMENDED: 
+10) to bound verification cost.
+
+#### 4.6.7 Non-Goals
+
+This section deliberately does not specify:
+
+- Who decides an authority is defunct. (Governance is out of scope.)
+- How root keys are recovered or rotated under coercion. (Recovery 
+  procedures are an authority's internal concern.)
+- Cross-authority dispute resolution if two parties claim to be 
+  successors. (Off-protocol; rely on the legal record.)
+
+These are real problems. v0.1 provides the cryptographic primitive; 
+operational ecosystems will need to build governance on top.
 
 ---
 
@@ -259,6 +669,52 @@ informational and MUST NOT be used as the primary identifier in place of
 
 [TODO: define additional standard identity fields]
 
+#### 5.2.1 Uncertainty Qualifiers
+
+When ingesting legacy systems or rebuilding records from incomplete 
+sources, identity fields are often imperfectly known. PhIP does not 
+require certainty: any identity field MAY be qualified by appending a 
+parallel `_quality` field carrying provenance metadata.
+
+```json
+{
+  "identity": {
+    "serial": "QCT88421-0042",
+    "serial_quality": {
+      "confidence": "high",
+      "source": "manufacturer_label_scan",
+      "as_of": "2026-04-12T09:00:00Z"
+    },
+    "lot": "2026-Q1-BATCH-04",
+    "lot_quality": {
+      "confidence": "low",
+      "source": "operator_recollection",
+      "note": "lot label damaged; inferred from adjacent units"
+    }
+  }
+}
+```
+
+A `_quality` object MAY contain:
+
+| Field | Description |
+|---|---|
+| `confidence` | One of `high`, `medium`, `low`, `unverified`. `high` = direct observation or trusted source; `unverified` = transcribed without checking |
+| `source` | Free-text provenance (`manufacturer_label_scan`, `erp_export_2024`, `operator_recollection`, `inferred`) |
+| `as_of` | ISO 8601 timestamp the value was last verified |
+| `corrected_from` | Previous value if this field has been corrected. Useful for legacy onboarding |
+| `note` | Free-text context |
+
+Tools that consume identity fields MUST handle the qualified form 
+identically to the unqualified form for matching and equality. 
+`_quality` is metadata only — it does not change the field's value 
+semantics.
+
+The convention applies to any identity field. A field named `serial` 
+has its qualifier as `serial_quality`; `part_number` → 
+`part_number_quality`. Resolvers MUST NOT enforce that qualifiers 
+exist for any particular field.
+
 ### 5.3 Minimal Valid Object
 
 ```json
@@ -287,6 +743,7 @@ constrains which relations and lifecycle transitions are valid.
 | `vehicle` | A mobile location: truck, train car, ship, drone. May carry objects via `contains` and has a position that changes over time |
 | `lot` | A logical grouping of identical items sharing a production identity |
 | `actor` | A person, organization, or automated system that pushes events |
+| `design` | A design specification or part-number revision. Target of `instance_of` relations. Has no physical instance. See Section 6.2 |
 
 Custom types are NOT permitted in the core vocabulary. Domain extensions 
 that require additional types SHOULD be proposed as amendments to this spec.
@@ -303,7 +760,120 @@ vehicle object. Continuous GPS telemetry SHOULD NOT be stored as PhIP events;
 instead, a PhIP `attribute_update` SHOULD capture waypoints at meaningful 
 state changes (departure, arrival, border crossing).
 
-[TODO: define geographic position attribute schema]
+The standard schema for position, address, route, and geofence data is 
+the `phip:geo` namespace (`schemas/geo.json`). Vehicles and locations 
+SHOULD use it; custom geographic schemas are permitted but reduce 
+interoperability.
+
+### 6.2 Design Objects
+
+A `design` object represents a specification, part-number revision, or 
+build target — the abstract definition of a thing, not a physical 
+instance. Designs are the target of `instance_of` relations from 
+physical objects (components, assemblies, systems).
+
+PhIP does not aim to replace product lifecycle management (PLM) systems 
+such as Windchill, Teamcenter, or Arena. The `design` type is a thin 
+addressable handle that lets `instance_of` resolve to a verifiable 
+target across organizational boundaries — the authoritative design 
+content typically lives in a PLM system referenced via 
+`phip:external_record` (Section 15.3).
+
+A `design` object MUST include the following identity fields:
+
+| Field | Required | Description |
+|---|---|---|
+| `part_number` | MUST | Manufacturer's part number for the design |
+| `revision` | MUST | Design revision identifier (e.g. `"A"`, `"3.2"`, `"2026-04-rev-7"`) |
+| `description` | SHOULD | Human-readable description |
+| `external_ref` | MAY | URL of the canonical design document in a PLM, drive, or other system |
+
+Design objects follow the manufacturing track lifecycle (Section 9.2). 
+The states map to design release status:
+
+- `concept` — initial idea; subject to change
+- `design` — actively under design work
+- `prototype` — in physical prototyping
+- `qualified` — design is approved
+- `stock` — released for production use; physical objects MAY 
+  `instance_of` this revision
+- `decommissioned` — superseded; new physical objects SHOULD NOT use 
+  this revision but existing instances remain valid
+- `consumed` / `disposed` — design is retired
+
+Design revisions are separate `design` objects, linked via the 
+`supersedes` relation (Section 7.1). A new revision does not invalidate 
+physical objects that `instance_of` the prior revision; their 
+provenance trail continues to point at the revision they were actually 
+built against.
+
+### 6.3 instance_of Target Constraint
+
+The `instance_of` relation MUST target a `design` object. An 
+`instance_of` relation pointing at any other object type is invalid 
+and MUST be rejected by the resolver with `INVALID_RELATION` (422).
+
+This is a tightening of Section 7. Implementations published before 
+this revision of the spec MAY have written `instance_of` relations 
+pointing at `component` or `system` objects acting as informal type 
+records. Authorities migrating to this version SHOULD register 
+corresponding `design` objects and rewrite the relations via 
+`relation_removed` + `relation_added` event pairs.
+
+### 6.4 Lot Identity: Fungibility and Quantity
+
+Lot objects represent groupings of identical or interchangeable items. 
+Two fields on a `lot`'s `identity` are normative:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `fungible` | boolean | MUST | `true` if the lot's units are mutually interchangeable for downstream use; `false` if individual units retain distinct identity within the lot |
+| `quantity` | object | SHOULD | Current quantity. See 6.4.1 |
+
+**Fungible lots** (`fungible: true`) — bulk materials (resin pellets, 
+solder paste, copper bars), commodity ingredients (coffee beans, 
+flour), and any grouping where pulling 1 kg from one end is 
+equivalent to pulling 1 kg from the other. Fungible lots support 
+`lot_split` and `lot_merge` operations freely.
+
+**Non-fungible lots** (`fungible: false`) — batches of serialized 
+items (a tray of 24 PCBs each with their own serial number, a pallet 
+of named LiDAR units). Non-fungible lots SHOULD also be modeled as 
+parents-of-components via `contains` relations to the individual 
+items. `lot_split` on a non-fungible lot MUST preserve the identity 
+of each contained item; the `resulting_lots` payload MUST list which 
+items go to which resulting lot.
+
+When `fungible` is absent, the resolver MUST treat the lot as 
+fungible. New authorities SHOULD set the field explicitly.
+
+#### 6.4.1 Quantity Tracking
+
+A lot's `identity.quantity` field is an object with these fields:
+
+| Field | Required | Description |
+|---|---|---|
+| `value` | MUST | Numeric quantity. MUST be ≥ 0 |
+| `unit` | MUST | SI unit symbol (`kg`, `g`, `m`, `L`, `units`, etc.) |
+| `as_of` | SHOULD | ISO 8601 timestamp of the most recent measurement |
+| `precision` | MAY | Quantity precision (e.g., `0.001` for milligram precision on a kg-scale). Used as the conservation tolerance `ε` in §10.5.1 |
+
+The current quantity is a projection of the event history. Each 
+`lot_split`, `lot_merge`, and `attribute_update` that changes the 
+quantity MUST be reflected by updating the lot's `identity.quantity`. 
+The lot history is the authoritative record; the `identity.quantity` 
+field is a convenience.
+
+When a lot is partially consumed by a `process` event without a full 
+split (e.g., 2 kg drawn from a 10 kg lot for a single build), the 
+authority SHOULD emit an `attribute_update` event reducing 
+`identity.quantity.value` accordingly. The remaining lot keeps its 
+`phip_id`. This is the lightweight pattern for routine draw-down — 
+`lot_split` is for events that produce new addressable sub-lots.
+
+`quantity` is not strictly required for non-fungible lots that 
+maintain a `contains` relation to every member, since the count is 
+derivable. Authorities MAY include it anyway for query convenience.
 
 ---
 
@@ -321,7 +891,8 @@ PhIP Objects. Each relation is a tuple of (type, phip_id).
 | `located_at` | — | Current position. Target MUST be of type `location` or `vehicle` |
 | `derived_from` | — | Material provenance. The subject was produced from the object. Multiple `derived_from` relations express many-to-one derivation (e.g., metals recovered from multiple sources) |
 | `replaces` | `replaced_by` | Temporal substitution. Subject took the place of object |
-| `instance_of` | — | The subject is a physical instance of a design or part number |
+| `instance_of` | — | Subject is a physical instance of a design. Target MUST be of type `design` (Section 6.3) |
+| `supersedes` | `superseded_by` | Subject `design` revision replaces an older `design`. Both endpoints MUST be of type `design` |
 | `manufactured_by` | — | Object MUST be of type `actor` |
 
 ### 7.2 Relation Format
@@ -382,7 +953,96 @@ A `relation_removed` event payload uses the same structure — the
 Relation metadata is not namespaced (unlike object attributes) because 
 it carries simple positional or structural data, not rich domain schemas.
 
-### 7.3 Custom Relations
+### 7.3 Bidirectional Relations Across Authorities
+
+Some relations are inherently bidirectional: `connected_to` describes 
+an interface link that is symmetric by physics, and `contains` /
+`contained_in` are inverses. When both endpoints live under the same 
+authority, the resolver can validate that both sides agree. When the 
+endpoints span authorities, **only the side under the writing 
+authority can be enforced**.
+
+The rules:
+
+- A relation is **owned** by the object it is attached to (per §7.2). 
+  An object's relations are mutable only by that object's authority 
+  or by holders of capability tokens (§11.3).
+- For `connected_to`, the writing authority MUST emit a 
+  `relation_added` on its own object. The far-side object's 
+  authority is expected (but not required) to emit a matching 
+  `relation_added` of their own. The two events are independent.
+- A `relation_added` event referencing a far-side `phip_id` MUST 
+  NOT trigger any write on the far-side authority. Cross-authority 
+  writes only happen via capability tokens (§11.3) and are explicit.
+- Verifiers reading either side MAY check that the other side has 
+  also recorded the relation. **Asymmetric relations 
+  (one-side-only) MUST NOT be treated as proof of an actual physical 
+  connection** — they may indicate a misconfiguration, a stale 
+  record, or a deliberately partial view.
+
+For `connected_to` specifically, the convention is:
+
+```json
+// On rack-007 (Acme):
+{ "type": "connected_to", "phip_id": "phip://quanta.com/servers/Q88421" }
+
+// On Q88421 (Quanta), if Quanta wishes to record the connection:
+{ "type": "connected_to", "phip_id": "phip://acme.example/racks/rack-007" }
+```
+
+Quanta is under no obligation to record the inverse. Tools that need 
+strong topology guarantees SHOULD prefer modeling both endpoints 
+under one authority's namespace, or use cross-authority 
+attestations that are explicitly signed by both parties (out of 
+scope for v0.1).
+
+For `contains` / `contained_in`, the same asymmetry holds. An 
+authority that places an object inside a foreign container records 
+`contained_in` on its own object; the container's authority is 
+free to record the inverse `contains` or not. Resolvers MUST NOT 
+require the inverse to be present.
+
+### 7.4 Dangling Relations
+
+A relation references a `phip_id` that may, at any later time:
+
+- Be unreachable (the target authority is offline or has been 
+  transferred without a reachable mirror).
+- Return `404 OBJECT_NOT_FOUND` (the target was never registered or 
+  was registered under a different `phip_id`).
+- Return `403 ACCESS_DENIED` (the target is private to another 
+  reader; §11.5).
+- Resolve to a different object than expected (e.g. due to a 
+  malicious authority).
+
+PhIP does **not** guarantee referential integrity across the 
+federation. The protocol is link-style, not foreign-key-style.
+
+Consumers MUST handle dangling relations gracefully:
+
+- Treat unreachable targets as **unknown**, not as evidence of 
+  malformed data. Surface the unreachability to operators rather 
+  than silently dropping the relation.
+- Cache last-known state of frequently referenced foreign objects 
+  to reduce the visible failure rate.
+- On `OBJECT_NOT_FOUND` from a once-resolvable target, retain the 
+  relation (the target may return) but flag the link as stale.
+
+A new error code conveys the case where a relation in an event 
+references a target that fails an integrity check the resolver does 
+enforce locally:
+
+| Code | HTTP | Description |
+|---|---|---|
+| `DANGLING_RELATION` | 422 | A `relation_added` event references a `phip_id` that the resolver was asked to verify and could not (e.g., the target lives in this authority's namespace but does not exist) |
+
+`DANGLING_RELATION` is emitted only for **same-authority** lookups — 
+when a relation_added in namespace A points at namespace A and the 
+target does not exist. Cross-authority targets MUST NOT produce this 
+error; they are accepted as-written and verified lazily by the 
+reader.
+
+### 7.5 Custom Relations
 
 Custom relations MAY be used under a namespaced type:
 
@@ -426,6 +1086,9 @@ namespace. This is the primary extensibility mechanism.
 | `phip:software` | Firmware, software versions, config hashes | Defined — `schemas/software.json` |
 | `phip:datacenter` | Rack position, power, thermal | Defined — `schemas/datacenter.json` |
 | `phip:compliance` | Certifications, life limits, chain of custody | Defined — `schemas/compliance.json` |
+| `phip:geo` | Geographic position, address, route, geofence | Defined — `schemas/geo.json` |
+| `phip:access` | Read access policy (Section 11.5) | Defined — `schemas/access.json` |
+| `phip:keys` | Public key material on actor objects (Section 11.2) | Defined inline in Section 11.2 |
 | `phip:procurement` | PO number, supplier, lead time | [TODO] |
 
 ### 8.3 Custom Namespaces
@@ -449,7 +1112,7 @@ Not all object types follow the same lifecycle. PhIP defines two tracks:
 
 **Manufacturing track** — for types that are designed, produced, and 
 eventually end-of-lifed: `material`, `component`, `assembly`, `system`, 
-`lot`.
+`lot`, `design`.
 
 **Operational track** — for types that exist to support the protocol and 
 don't go through a manufacturing lifecycle: `actor`, `location`, `vehicle`.
@@ -591,6 +1254,7 @@ Each event MUST contain:
 | `lot_split` | A lot was divided into two or more new lots. See 10.5 |
 | `lot_merge` | Two or more lots were combined into one. See 10.5 |
 | `note` | Free-text annotation |
+| `authority_transfer` | Authority over one or more namespaces transferred to a successor. MUST be signed by the source authority's root key and appear in the authority record. See Section 4.6 |
 
 ### 10.3 Hash Chain
 
@@ -668,6 +1332,53 @@ The `yield_fraction` field is OPTIONAL and represents the mass fraction of
 the input that contributed to this output. This enables proportional 
 provenance tracking for regulated materials.
 
+#### 10.4.1 Yield Fraction Semantics
+
+When `yield_fraction` is supplied on outputs, the values MUST be 
+non-negative real numbers in the closed interval `[0, 1]`.
+
+The yield fractions on outputs that share a single input describe how 
+that input was distributed across outputs. For each input referenced 
+by one or more outputs, the sum of `yield_fraction` values on outputs 
+that point at that input via `derived_from` MUST satisfy:
+
+```
+sum(yield_fraction_i) ≤ 1.0 + ε
+```
+
+where `ε` is a small rounding tolerance. Authorities SHOULD use 
+`ε = 1e-6`. A sum strictly less than 1 is permitted — it represents 
+material loss (slag, scrap, evaporation) that is not tracked as a 
+distinct output.
+
+A sum exceeding `1 + ε` MUST be rejected by the resolver with 
+`INVALID_EVENT` (422). Sums exceeding 1 imply mass duplication, which 
+violates conservation.
+
+When an input has multiple `derived_from` outputs but yield fractions 
+are absent, the resolver MAY treat the fractions as unspecified rather 
+than implicit-equal-share — equal-share would be a guess, and absence 
+is more honest. Tools that compute aggregate provenance SHOULD treat 
+missing fractions as "unknown" and propagate uncertainty rather than 
+substituting `1/N`.
+
+#### 10.4.2 Numerical Representation
+
+`yield_fraction` is serialized as a JSON number per RFC 8785 (JCS) — 
+the canonical form is the shortest round-trip ECMAScript representation 
+(Section 10.3). Authorities SHOULD avoid yield fractions with more than 
+six significant digits; finer precision is below the rounding tolerance 
+and creates spurious chain divergence.
+
+When a single input is split across many outputs (e.g. a copper lot 
+distributed across 100 cable spools), the recommended pattern is to 
+quote each output's yield as a fraction with explicit shared 
+denominator (e.g. `0.01` for each of 100 equal shares). Renormalizing 
+to compensate for floating-point drift after the fact MUST NOT mutate 
+already-emitted events; if the sum exceeds tolerance, the authority 
+MUST emit a corrective `process` event (typically representing the 
+lost or unaccounted material as an explicit output).
+
 ### 10.5 Lot Operations
 
 Lots may be split or merged during their lifecycle.
@@ -705,6 +1416,52 @@ pointing to all sources.
   }
 }
 ```
+
+#### 10.5.1 Quantity Conservation
+
+When source and resulting lots carry a quantity field 
+(`quantity_kg`, `quantity_units`, etc.; see §6.4), lot operations 
+MUST satisfy mass conservation within a small tolerance.
+
+**Lot Split.** Sum of resulting `quantity_*` values MUST satisfy:
+
+```
+sum(resulting) ≤ source_quantity + ε
+```
+
+A sum strictly less than the source quantity is permitted — it 
+represents recorded loss (the `reason` field SHOULD describe it: 
+`partial_spoilage`, `sampling_loss`). The lot_split payload MAY 
+include a `loss_quantity` field naming the lost amount explicitly:
+
+```json
+{ "type": "lot_split", "payload": { "loss_quantity_kg": 200, ... } }
+```
+
+A split where `sum(resulting) + loss_quantity > source_quantity + ε` 
+MUST be rejected with `INVALID_EVENT` (422).
+
+**Lot Merge.** Sum of source `quantity_*` values MUST equal the 
+resulting lot's quantity within tolerance:
+
+```
+abs(sum(source) - resulting_quantity) ≤ ε
+```
+
+Mergers that introduce mass (e.g., adding a non-tracked filler) MUST 
+NOT use `lot_merge`; a `process` event with the filler as an explicit 
+input is the correct representation.
+
+**Tolerance.** `ε` SHOULD be set to the smaller of:
+- 0.1 % of the source quantity, or
+- the unit precision of the relevant measurement (e.g. ε = 1g for 
+  measurements taken on a gram-precision scale).
+
+Resolvers MUST validate conservation only when **all** participating 
+lots carry comparable quantity fields. Splits or merges between lots 
+with mismatched units (`quantity_kg` and `quantity_units`) MUST NOT 
+be silently allowed; the authority SHOULD emit a `process` event 
+instead, since unit conversion is a transformation.
 
 The `source_lots` array MUST contain at least two entries. Each source 
 lot SHOULD be transitioned to `consumed` by the pushing actor.
@@ -884,15 +1641,24 @@ any object whose `phip_id` starts with that prefix.
 | `push_state` | Append `state_transition` events only |
 | `push_measurements` | Append `measurement` events only |
 | `push_relations` | Append `relation_added` and `relation_removed` events only |
+| `read_state` | Read object projection via GET (no history) |
+| `read_history` | Read object projection AND full event history |
+| `read_query` | Match objects via QUERY |
 
 A token with `push_events` scope is a broad grant. The narrower scopes 
 allow fine-grained delegation: a carrier transporting goods may receive 
 `push_relations` (to update `located_at`) but not `push_state`. A sensor 
 may receive `push_measurements` but nothing else.
 
+The `read_*` scopes gate access to objects whose `phip:access` policy 
+restricts reads (Section 11.5). A token MAY combine read and write 
+scopes by being issued multiple times with different scope values; a 
+single token has exactly one scope.
+
 #### 11.3.3 Token Presentation
 
-Capability tokens are presented via HTTP header on PUSH requests:
+Capability tokens are presented via HTTP header on PUSH, GET, and QUERY 
+requests:
 
 ```
 Authorization: PhIP-Capability <base64url-encoded-token>
@@ -952,6 +1718,44 @@ carrier, allowing the carrier to push `relation_added` and
 `relation_removed` events for `located_at` relations on the shipped 
 objects.
 
+#### 11.3.7 Multi-Party Custody Transfers
+
+A custody transfer involves three actors: the **prior custodian** 
+(who held the goods), the **carrier** (who moves them), and the 
+**next custodian** (who receives them). The `located_at` relation on 
+each shipped object MUST track this chain.
+
+The recommended pattern:
+
+1. The prior custodian issues a capability token with 
+   `push_relations` scope, `granted_to` the carrier, and 
+   `object_filter` matching the shipped objects. The token's 
+   `expires` SHOULD bound the expected transit window plus a small 
+   buffer.
+2. At pickup, the carrier emits `relation_removed` for the previous 
+   `located_at` (e.g., the warehouse) and `relation_added` for the 
+   carrier's vehicle.
+3. In transit, the carrier MAY emit further `attribute_update` 
+   events on the vehicle (position via `phip:geo`) but SHOULD NOT 
+   emit further `located_at` updates on the goods until handoff.
+4. At delivery, the carrier emits a final `relation_removed` (off 
+   the vehicle) and `relation_added` (at the next custodian's 
+   location). The carrier's token SHOULD be allowed to expire 
+   shortly after.
+5. The next custodian, on accepting the goods, MAY then issue their 
+   own tokens for downstream handling.
+
+If transit is interrupted (theft, accident, force majeure), the 
+prior custodian retains the right to update relations on the goods 
+since the original token has not been revoked. They SHOULD emit a 
+`note` event documenting the disruption and SHOULD revoke the 
+carrier's token (per §11.3.5) before re-routing.
+
+The carrier MUST NOT issue capability tokens of their own against 
+the shipped objects — they hold a delegated capability, not 
+ownership. Sub-delegation requires the prior custodian to issue a 
+new token directly to the sub-carrier.
+
 ### 11.4 Automated and IoT Actors
 
 Automated systems (IoT sensors, MES controllers, OTA update services) are 
@@ -980,8 +1784,157 @@ Instead:
 - A `measurement` event MAY reference an external telemetry source via a 
   URL in its payload for detailed data.
 
-[TODO: define standard payload format for measurement events referencing 
-external telemetry]
+#### 11.4.2 Measurement Event Payload
+
+A `measurement` event MUST carry a payload of the following shape:
+
+```json
+{
+  "type": "measurement",
+  "payload": {
+    "metric": "internal_temperature_c",
+    "value": 87.4,
+    "unit": "°C",
+    "as_of": "2026-04-23T14:32:11Z",
+    "method": "ntc_thermistor",
+    "uncertainty": 0.5,
+    "thresholds": {
+      "warning": 80,
+      "critical": 95
+    },
+    "outcome": "warning",
+    "external_ref": {
+      "url": "https://telemetry.acme.example/series/srv-042/temp?from=...&to=...",
+      "content_hash": "sha256:8f4a...",
+      "media_type": "application/json",
+      "window": {
+        "from": "2026-04-23T14:00:00Z",
+        "to": "2026-04-23T15:00:00Z"
+      }
+    },
+    "samples": 360
+  }
+}
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `metric` | MUST | Identifier for what was measured (e.g. `internal_temperature_c`, `vibration_rms_mm_s`, `pressure_psi`). SHOULD reuse a domain vocabulary; custom metrics SHOULD be namespaced (`acme:nozzle_flow`) |
+| `value` | MUST | Numeric or string measurement result. For derived results (`pass`/`fail`, `warning`), use a string |
+| `unit` | SHOULD | SI or domain unit symbol. Omitted for unitless metrics or pass/fail outcomes |
+| `as_of` | MUST | ISO 8601 timestamp the measurement applies to (the observation time, not the push time) |
+| `method` | MAY | Free-text or controlled identifier for measurement method or instrument class |
+| `uncertainty` | MAY | Numeric 1-σ uncertainty in the same `unit` as `value` |
+| `thresholds` | MAY | Object naming the limits used to interpret the result. Common keys: `warning`, `critical`, `nominal_min`, `nominal_max` |
+| `outcome` | MAY | Conclusion drawn from the measurement: `nominal`, `warning`, `critical`, `pass`, `fail`, `out_of_range` |
+| `external_ref` | MAY | Pointer to detailed telemetry the measurement is summarizing or derived from. Format follows §15.3 (`url`, `content_hash`, `media_type`) plus an optional `window` describing the time range |
+| `samples` | MAY | If derived from aggregated telemetry, the number of underlying samples |
+
+The `external_ref.window` field SHOULD be present whenever 
+`external_ref.url` returns time-series data — it lets verifiers 
+re-derive the measurement from raw data without ambiguity about 
+which slice was used.
+
+A measurement that exists purely as a `value` + `as_of` (no 
+external reference) is conformant. The external reference is for 
+auditability when the source data is voluminous or proprietary.
+
+Resolvers MUST NOT validate `metric` against a controlled vocabulary 
+in v0.1; this would prevent domain extension. They SHOULD reject 
+measurements whose `value` type does not match `unit` (e.g., a 
+string `value` with a numeric unit makes no sense).
+
+The `outcome` field is a derived assessment, not a raw datum. 
+Authorities MAY emit subsequent `measurement` events with different 
+`outcome` values if interpretation thresholds are revised; the 
+historical `outcome` records what was concluded at the time. This 
+distinction matters for regulated domains where the conclusion 
+itself is auditable.
+
+### 11.5 Read Access Control
+
+PhIP objects are publicly readable by default. An authority MAY restrict
+read access by attaching a `phip:access` attribute to an object.
+
+#### 11.5.1 Access Policy
+
+The `phip:access` attribute namespace defines a single field, `policy`,
+whose value is one of:
+
+| Policy | Meaning |
+|---|---|
+| `public` | Anyone may GET, read history, and match in QUERY. Default if `phip:access` is absent. |
+| `authenticated` | Caller MUST present a valid capability token with any `read_*` scope, regardless of `granted_to` |
+| `capability` | Caller MUST present a capability token whose `granted_to` matches the requesting actor and whose scope covers the requested operation |
+| `private` | No external reads. Only the authority itself may read. |
+
+The policy applies to GET (`/resolve/`), GET history (`/history/`), and 
+QUERY (`/query/`). It does not apply to PUSH or CREATE — those are 
+gated separately by the existing write scopes.
+
+The `phip:access` attribute MUST be writable only by the authority that 
+owns the object. Attempts to update `phip:access` from a foreign 
+namespace MUST be rejected with `FOREIGN_NAMESPACE` (403) regardless of 
+any held capability tokens.
+
+#### 11.5.2 Resolution Order
+
+For a GET, GET-history, or QUERY request the resolver MUST evaluate, in 
+order:
+
+1. If the object's `phip:access.policy` is `public` (or `phip:access` is 
+   absent), allow.
+2. If the policy is `private`, reject with `ACCESS_DENIED` (403) unless 
+   the requesting actor is the authority itself.
+3. If the policy is `authenticated` or `capability`, decode any 
+   `Authorization: PhIP-Capability` header. If absent, reject with 
+   `MISSING_CAPABILITY` (403).
+4. Verify the token signature, expiry, and `granted_to` per Section 
+   11.3.4 steps 1–4.
+5. Verify the token's `scope` covers the requested operation:
+   - GET requires `read_state` or `read_history`
+   - GET history requires `read_history`
+   - QUERY requires `read_query`
+6. Verify the token's `object_filter` matches the target `phip_id`. For 
+   QUERY, the filter restricts which objects can be returned in the 
+   match list — objects outside the filter MUST be silently omitted, 
+   not returned with an error.
+7. If the policy is `capability`, verify the requesting actor matches 
+   `granted_to`.
+
+If any check fails, return `ACCESS_DENIED` (403) for policy mismatches 
+or `INVALID_CAPABILITY` (403) for token defects.
+
+#### 11.5.3 QUERY Filtering
+
+When QUERY is invoked without a token, the resolver MUST return only 
+objects whose policy is `public`. When invoked with a token, the 
+resolver MUST return only objects whose policy and ACL admit the 
+requesting actor. Restricted objects MUST NOT appear in the response — 
+omission is the only signal of inaccessibility.
+
+This means QUERY result counts depend on the caller's identity. 
+Resolvers SHOULD NOT advertise total counts that would leak the 
+existence of restricted objects.
+
+#### 11.5.4 Hash Chain Integrity Under Restriction
+
+A restricted object's hash chain remains valid for any party who can 
+read its history. The chain head MUST NOT be exposed via metadata 
+documents, error responses, or any other side channel that bypasses 
+the access policy. In particular, `CHAIN_CONFLICT` responses on PUSH 
+to a restricted object MUST NOT include `current_head` if the pushing 
+actor lacks a `read_state` or `read_history` scope; the resolver MUST 
+instead return `ACCESS_DENIED` (403) and require the pusher to obtain 
+read scope before retrying.
+
+#### 11.5.5 Public-By-Default Rationale
+
+PhIP keeps `public` as the default to preserve cross-organizational 
+discovery for regulatory disclosures, safety certifications, and 
+provenance claims that are intended to be verifiable by any party. 
+Authorities that hold commercially sensitive data MUST attach 
+`phip:access` explicitly — silence is consent.
 
 ---
 
@@ -1318,18 +2271,53 @@ structure is not normative.
 | `INVALID_SIGNATURE` | 401 | Event signature verification failed |
 | `KEY_NOT_FOUND` | 401 | The `key_id` in the signature could not be resolved |
 | `KEY_EXPIRED` | 401 | The signing key's validity window does not cover the event timestamp |
-| `MISSING_CAPABILITY` | 403 | Cross-org push without a capability token |
+| `MISSING_CAPABILITY` | 403 | Cross-org push or restricted read without a capability token |
 | `INVALID_CAPABILITY` | 403 | Capability token signature invalid, expired, or scope insufficient |
-| `FOREIGN_NAMESPACE` | 403 | CREATE attempted in a namespace the caller does not own |
+| `ACCESS_DENIED` | 403 | Read denied by the object's `phip:access` policy (Section 11.5) |
+| `FOREIGN_NAMESPACE` | 403 | CREATE attempted in a namespace the caller does not own, or `phip:access` write attempted from a foreign namespace |
 | `INVALID_OBJECT` | 422 | Object model validation failed (missing required fields, unknown type) |
 | `INVALID_EVENT` | 422 | Event structure invalid (missing fields, unknown event type) |
 | `INVALID_TRANSITION` | 422 | State transition not allowed on this object type's lifecycle track. `details` SHOULD include `valid_transitions` |
 | `INVALID_TRACK` | 422 | State is not valid for this object type's lifecycle track |
 | `INVALID_RELATION` | 422 | Relation type constraint violated (e.g., `located_at` target is not a `location` or `vehicle`) |
+| `DANGLING_RELATION` | 422 | A same-authority relation references a `phip_id` that does not exist (Section 7.4) |
 | `INVALID_QUERY` | 422 | Query predicate is malformed or uses unsupported features |
 
 Error responses MUST NOT be signed. They are informational, not 
 historical records. HTTPS is the integrity mechanism for error responses.
+
+### 12.6 Metadata Document
+
+An authority MAY publish a metadata document describing its resolver's
+capabilities:
+
+```
+GET https://{authority}/.well-known/phip/meta
+```
+
+A `200 OK` response is an `application/json` document with the following
+fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `protocol_version` | string | MUST | Spec version this resolver targets (e.g. `"0.1.0-draft"`) |
+| `authority` | string | MUST | The authority name this resolver serves |
+| `namespaces` | array of strings | MUST | Namespaces this resolver will accept CREATEs into |
+| `schema_namespaces` | array of strings | SHOULD | Attribute namespaces whose schemas this resolver validates (e.g. `phip:mechanical`, `phip:software`) |
+| `supported_operations` | array of strings | SHOULD | Subset of `["create", "get", "push", "query", "history"]` |
+| `query_capabilities` | object | MAY | Optional map describing supported filter operators, glob syntax, sort orders |
+| `root_key` | string | SHOULD | PhIP URI of this authority's root key (Section 4.6.1). Clients use this to anchor trust for transfer verification |
+| `mirror_urls` | array of strings | MAY | URLs of read-only mirrors hosting frozen snapshots of this authority's records. See Section 4.6.5 |
+| `successor` | object | MAY | Present iff this authority has been transferred. Object: `{ "authority": "newco.example", "transfer_event_id": "...", "effective_from": "..." }`. Clients SHOULD redirect subsequent requests to the successor |
+| `delegations` | array of objects | MAY | Active sub-namespace delegations. See Section 4.5.1 for entry shape |
+
+A resolver that does not publish `/meta` is still conformant. Clients
+that need a feature not advertised in `/meta` SHOULD attempt the
+operation and handle the resulting error rather than refusing to
+connect.
+
+Servers responding to `/meta` SHOULD set `Cache-Control: public, max-age=3600`
+or longer — the document changes infrequently.
 
 ---
 
@@ -1368,7 +2356,24 @@ A conformant PhIP resolver SHOULD:
 - Support `Cache-Control` headers on key resource responses
 - Publish its supported schema namespaces
 
-[TODO: define a conformance test suite reference]
+A conformance test suite is maintained alongside this specification in the
+`tests/` directory of the reference repository. It has two independent
+components:
+
+- `tests/vectors/` — language-agnostic fixtures that lock down the wire
+  format: RFC 8785 canonicalization output, SHA-256 hash encoding,
+  Ed25519 signing and verification, URI parsing, hash-chain continuity,
+  lifecycle transition tables, and the self-signed bootstrap key pattern
+  (Section 11.2.4). A client library is byte-compatible with the reference
+  implementation iff it produces identical output on every fixture.
+
+- `tests/conformance/` — a black-box HTTP suite that exercises a running
+  PhIP server's `/.well-known/phip/*` endpoints through the full v0.1
+  contract: CREATE, GET, PUSH, QUERY, `/history/`, chain-conflict
+  handling, and error envelopes from Section 12.5.
+
+Compliant implementations SHOULD execute both components before publishing
+a release.
 
 ---
 
@@ -1391,7 +2396,145 @@ A conformant PhIP resolver SHOULD:
 
 ---
 
-## 15. IANA Considerations
+## 15. Privacy Considerations
+
+PhIP histories are append-only and signed. This is the right design for 
+provenance, but it sits in tension with privacy-by-design and with 
+data-protection regimes (GDPR, CCPA, PIPEDA, and similar) that grant 
+data subjects a right to erasure. PhIP does not solve this conflict; it 
+provides hooks that let an authority remain compliant by keeping 
+personal data **out of the chain in the first place**.
+
+**This section defines architectural conventions, not a compliance 
+framework.** Legal compliance is the authority's responsibility. PhIP's 
+job is to not prevent it.
+
+### 15.1 No Raw PII in Events
+
+A conformant authority MUST NOT place raw personal data in event 
+payloads. "Personal data" includes (non-exhaustively): names, email 
+addresses, postal addresses, phone numbers, government identifiers, 
+biometric data, precise geolocation, and any unique identifier that 
+maps directly to a natural person.
+
+Acceptable event metadata includes:
+
+- Actor URIs (`phip://acme.example/actors/operator-7421`) — these are 
+  pseudonymous identifiers under the authority's control and can be 
+  re-mapped or retired without rewriting history.
+- Timestamps, lifecycle states, lifecycle transitions, hash values.
+- Object-level attributes that describe the *thing*, not the person 
+  (serial numbers, dimensions, certifications).
+
+A `note` event payload of `"Inspected by Jane Doe at 555-1234"` is a 
+spec violation. The same information rendered as `"Inspected by 
+phip://acme.example/actors/inspector-jane-d"` is conformant.
+
+### 15.2 Personal Data Namespace Convention
+
+When an event MUST reference personal data — for traceability, 
+regulatory audit, or contractual obligation — the data MUST be carried 
+indirectly via the `phip:personal_data` attribute namespace.
+
+Values under `phip:personal_data` MUST be **commitments** (cryptographic 
+hashes with per-record salts), never raw values:
+
+```json
+{
+  "phip:personal_data": {
+    "subject_commitment": "sha256:c2b8d7e4...8f4a4e3c",
+    "salt_id": "salt-2026-04-001",
+    "data_class": "operator_identity",
+    "external_record": "phip://acme.example/records/operator-mapping-2026"
+  }
+}
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `subject_commitment` | MUST | Salted hash of the personal data, encoded per Section 10.3 |
+| `salt_id` | MUST | Identifier of the salt used. Salts MUST be unique per record |
+| `data_class` | SHOULD | Free-text category (e.g. `operator_identity`, `customer_contact`) |
+| `external_record` | MAY | PhIP URI or URL of the off-chain record holding the raw data |
+
+Salts and the salt → raw-data mapping MUST be stored outside the PhIP 
+chain, in a system that supports deletion. Erasing a salt 
+cryptographically severs the commitment from any subject — the 
+commitment becomes an opaque hash with no recoverable original. This 
+is the spec's primary erasure mechanism: **delete the salt, and the 
+chain forgets.**
+
+### 15.3 External Record References
+
+When an event references off-chain data that is not itself personal 
+(e.g., a measurement file, an inspection photo, a contract PDF), the 
+reference SHOULD use the `phip:external_record` attribute namespace:
+
+```json
+{
+  "phip:external_record": {
+    "url": "https://records.acme.example/inspections/2026/04/INS-99421",
+    "content_hash": "sha256:8f4a4e3c...c2b8d7e4",
+    "media_type": "application/pdf",
+    "retention_policy": "7y"
+  }
+}
+```
+
+The `url` resolves through a system that supports deletion. The 
+`content_hash` lets the chain prove the referenced bytes existed at the 
+time of the event without storing them in the chain. After the 
+retention period elapses or a deletion request is honored, the URL may 
+return 404 — the chain remains valid but the referenced content is 
+gone.
+
+### 15.4 Pseudonymous Actors
+
+Authorities that process personal data SHOULD provision a separate 
+`actor` PhIP object per natural person rather than hard-coding 
+identifying strings into events. The actor's `identity` field MAY 
+contain personal data, but personal-data fields on actors are governed 
+by the same erasure mechanism: the authority deletes the actor's 
+external mapping and replaces the actor's `identity` block with a 
+sanitized projection (the historical events still reference the actor 
+URI but the URI no longer maps to a natural person).
+
+This approach trades exact replay fidelity for compliance: a verifier 
+can confirm "actor X signed this event in 2027" but cannot recover 
+which natural person actor X was, once the mapping is deleted.
+
+### 15.5 Salt Compromise
+
+If a salt itself leaks, every commitment using that salt becomes 
+opener and effectively reveals the underlying personal data. The 
+authority MUST treat salt compromise as a privacy incident and:
+
+1. Issue new salts for affected records going forward.
+2. Where contractual or legal duties require, notify affected subjects 
+   per the applicable regime (the spec does not define notification 
+   procedures).
+3. Update `phip:personal_data` attributes on subsequent events with the 
+   new salt; historical events using the leaked salt remain in the 
+   chain.
+
+A leaked salt cannot be "rotated out" of historical events — that is a 
+fundamental property of an append-only chain. The mitigation is 
+prospective. Authorities holding high-sensitivity data SHOULD generate 
+short-lifetime salts and rotate them on a schedule shorter than the 
+expected attack discovery window.
+
+### 15.6 Read Access Control as a Privacy Tool
+
+The `phip:access` mechanism (Section 11.5) is not by itself a privacy 
+control — restricting reads still leaves personal data in the chain 
+for the authority and any actor with read scope. Compliance regimes 
+generally require that personal data not exist in append-only form, 
+not merely that it be hidden from outside readers. Use Section 11.5 
+for confidentiality; use Section 15.1–15.5 for privacy.
+
+---
+
+## 16. IANA Considerations
 
 This document requests registration of the `phip` URI scheme.
 
@@ -1399,7 +2542,7 @@ This document requests registration of the `phip` URI scheme.
 
 ---
 
-## 16. References
+## 17. References
 
 ### Normative
 
@@ -1444,35 +2587,32 @@ Issues identified through scenario stress-testing and systematic review.
 | ~~A25~~ | Error response format | Standard error envelope with 17 error codes and HTTP status mappings. See Section 12.5 |
 | ~~A31~~ | Relation metadata | Optional flat `metadata` object on relations, carried through `relation_added` event payloads. See Section 7.2 |
 | ~~A32~~ | History pagination | GET returns state projection with `history_length`/`history_head`; separate `/history/` sub-resource with cursor pagination. See Section 12.2.1 |
+| ~~A10~~ | Resolver discovery, caching headers, redirect behavior | Authority name = DNS = HTTPS endpoint (no DNS TXT/SRV); `ETag`/`Cache-Control` guidance; same-authority-only redirect policy; `/.well-known/phip/meta` capability document. See Section 4.3 and Section 12.6 |
+| ~~A1~~ | Sub-object addressing: independent objects vs. facets | Field-replaceable rule, no lifecycle inheritance, `contained_in` is normative source of truth, path segments are informational. See Section 4.4 |
+| ~~A13~~ | Design revision model and `instance_of` target type | Added `design` object type (Section 6.2) on the manufacturing track; `instance_of` MUST target a `design`; `supersedes`/`superseded_by` relations link revisions. See Sections 6.2, 6.3, 7.1 |
+| ~~A23~~ | Authority transfer / domain death | New `authority_transfer` event type signed by a long-lived root authority key; authority record at `/.well-known/authority`; `mirror_urls` and `successor` fields in `/meta`; same-authority redirect rule relaxed for verified transfers. See Section 4.6 |
+| ~~A26~~ | No read access control | New `phip:access` namespace (`public`/`authenticated`/`capability`/`private`); capability tokens extended with `read_state`/`read_history`/`read_query` scopes; `ACCESS_DENIED` error code; QUERY filtering by access. See Section 11.5 and `schemas/access.json` |
+| ~~A27~~ | Privacy / GDPR | New Section 15 privacy annex: no-raw-PII rule, `phip:personal_data` salted-commitment convention, `phip:external_record` for off-chain references, salt deletion as the erasure mechanism, pseudonymous-actor pattern. See Section 15 |
+| ~~A2~~ | Proportional provenance: yield_fraction math | Yields constrained to [0,1]; sum-per-input ≤ 1 + ε with ε = 1e-6; missing fractions treated as unknown (no implicit equal-share); corrective process events for drift. See Section 10.4.1, 10.4.2 |
+| ~~A3~~ | Geographic position schema | New `phip:geo` namespace covering position (WGS 84 lat/lon/alt/accuracy), address, route with waypoints/carrier, and geofence. See `schemas/geo.json` |
+| ~~A4~~ | Cross-org custody transfer ownership | New Section 11.3.7: prior custodian → carrier → next custodian token chain with explicit pickup/transit/delivery roles and disruption handling. Sub-delegation requires direct issuance, not carrier re-delegation |
+| ~~A5~~ | Lot split mass conservation | New Section 10.5.1: `sum(resulting) ≤ source + ε` with optional `loss_quantity`; merge enforces equality; unit-mismatched merges require a `process` event |
+| ~~A6~~ | Measurement event payload | New Section 11.4.2: normative `metric`/`value`/`unit`/`as_of`/`method`/`uncertainty`/`thresholds`/`outcome`/`external_ref`/`samples` shape with derived-vs-raw distinction |
+| ~~A12~~ | Authority delegation | New Section 4.5.1–4.5.5: `delegations` array in `/meta`, scoped operations, revocation by metadata edit, sub-delegation depth control. Same-authority redirect rule relaxed for verified delegations |
+| ~~A14~~ | Lot fungibility | New Section 6.4: required `fungible` boolean on lot identity; non-fungible lots MUST `contains` member items; default-fungible if absent |
+| ~~A15~~ | Lot quantity tracking | New Section 6.4.1: `identity.quantity` with `value`/`unit`/`as_of`/`precision`; partial draw-down via `attribute_update` (no split needed); split is for new addressable sub-lots |
+| ~~A16~~ | Regulatory jurisdiction | Added `jurisdiction`, `regulatory_authority`, `applicable_jurisdictions`, and `export_control` (regime/classification/license) to `phip:compliance`. ISO 3166 codes |
+| ~~A18~~ | Uncertainty qualifiers | New Section 5.2.1: parallel `<field>_quality` convention with `confidence`/`source`/`as_of`/`corrected_from`/`note`. Tools MUST treat qualified and unqualified fields identically for matching |
+| ~~A29~~ | connected_to bidirectional cross-org | New Section 7.3: relations are owned by their writing object; `connected_to` and `contains`/`contained_in` only enforceable on the writing side; asymmetric relations MUST NOT be treated as proof of physical state |
+| ~~A30~~ | Dangling relations | New Section 7.4: graceful degradation rules + new `DANGLING_RELATION` (422) error code for same-authority broken refs only; cross-authority targets verified lazily by readers |
 
 ### A.2 Open Issues — Post-v0.1
 
-No issues currently block the reference implementation. The following 
-are real issues to address in subsequent spec revisions or appendices.
-
-These are real issues but do not block the reference implementation. 
-They can be addressed in subsequent spec revisions or appendices.
+No issues currently block the reference implementation. The remaining 
+items below are deferral candidates for v0.2.
 
 | # | Issue | Severity | Section |
 |---|---|---|---|
-| A1 | Sub-object addressing: path segments vs. fragment identifiers. Do sub-objects have independent lifecycle states? | High | 4.4 |
-| A13 | Design revision model and `design`/`specification` object type for `instance_of` targets | High | 6, 7 |
-| A23 | Authority transfer / domain death: no mechanism for ownership transfer or domain migration | High | 4.2 |
-| A26 | No read access control: trust model covers write authorization only. All objects publicly readable by default | High | 11, 12 |
-| A27 | Privacy / GDPR: append-only history conflicts with right-to-erasure. Standard mitigations (PII hashing, off-chain pointers) are well-understood — needs a privacy annex | High | 10, 14 |
-| A2 | Proportional provenance: `yield_fraction` math (conservation, rounding) needs normative rules | Medium | 10.4 |
-| A3 | Geographic position attribute schema for vehicles and mobile locations | Medium | 6.1 |
-| A4 | Cross-org relation write ownership during multi-party custody transfers | Medium | 11.3.1 |
-| A5 | Lot split mass conservation rules | Medium | 10.5 |
-| A6 | Measurement event payload format for referencing external telemetry | Medium | 11.4.1 |
-| A10 | Resolver discovery, caching headers, redirect behavior | Medium | 4.3 |
-| A12 | Authority delegation mechanism | Medium | 4.5 |
-| A14 | Fungibility flag for lot objects | Medium | 6 |
-| A15 | Quantity tracking on lots without lot splitting | Medium | 5, 10 |
-| A16 | Regulatory jurisdiction in compliance schema | Medium | 8.2 |
-| A18 | Uncertainty / confidence qualifiers on identity fields for legacy onboarding | Medium | 5.2 |
-| A29 | `connected_to` bidirectionality unenforceable cross-org | Medium | 7 |
-| A30 | Dangling relation references: guidance on unresolvable targets | Medium | 7 |
 | A33 | Batch/transaction operations for bulk object creation | Low | 12 |
 | A34 | Offline / air-gapped resolution | Low | 4.3 |
 | A35 | HTTP authentication mechanism | Low | 12 |
