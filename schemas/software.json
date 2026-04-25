@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mfgs-us/phip/schemas/software.json",
+  "version": "1.0",
   "title": "phip:software",
   "description": "Schema for the phip:software attribute namespace. Covers firmware and software versions, configuration hashes, and OS identity. Applicable to object types: component, assembly, system.",
 

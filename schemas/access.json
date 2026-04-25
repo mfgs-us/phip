@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mfgs-us/phip/schemas/access.json",
+  "version": "1.0",
+  "title": "phip:access",
+  "description": "Schema for the phip:access attribute namespace. Declares the object's read access policy per Section 11.5. Absence of phip:access on an object is equivalent to policy='public'.",
+
+  "type": "object",
+  "properties": {
+    "policy": {
+      "type": "string",
+      "enum": ["public", "authenticated", "capability", "private"],
+      "description": "Read access policy. 'public' is the default when phip:access is absent. 'authenticated' requires any valid read capability token. 'capability' requires a token whose granted_to matches the requesting actor. 'private' restricts reads to the authority itself."
+    },
+    "policy_set_by": {
+      "type": "string",
+      "description": "PhIP URI of the actor who set the current policy. Informational only — the authoritative record is the event history.",
+      "pattern": "^phip://[A-Za-z0-9.-]+/[A-Za-z0-9._~%-]+(?:/[A-Za-z0-9._~%-]+)+$"
+    },
+    "policy_set_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the current policy was applied."
+    },
+    "rationale": {
+      "type": "string",
+      "description": "Optional human-readable note explaining why the policy was set (e.g. 'contains customer BOM under NDA', 'public regulatory disclosure')."
+    }
+  },
+  "required": ["policy"],
+  "additionalProperties": true
+}

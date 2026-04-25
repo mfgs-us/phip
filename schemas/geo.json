@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mfgs-us/phip/schemas/geo.json",
+  "version": "1.0",
+  "title": "phip:geo",
+  "description": "Schema for the phip:geo attribute namespace. Carries geographic position, address, and route information for vehicles and mobile locations. Position values are points-in-time snapshots; the authoritative position trajectory is reconstructed from the event history of attribute_update events on the object.",
+
+  "type": "object",
+  "properties": {
+    "position": {
+      "type": "object",
+      "description": "Current geographic position as a single point.",
+      "properties": {
+        "lat": {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90,
+          "description": "Latitude in decimal degrees, WGS 84."
+        },
+        "lon": {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180,
+          "description": "Longitude in decimal degrees, WGS 84."
+        },
+        "altitude_m": {
+          "type": "number",
+          "description": "Altitude in metres above WGS 84 ellipsoid."
+        },
+        "accuracy_m": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Estimated horizontal accuracy radius in metres (1-sigma)."
+        },
+        "as_of": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp the position was observed."
+        },
+        "source": {
+          "type": "string",
+          "description": "How the position was determined (e.g. 'gps', 'cell_triangulation', 'manual_entry', 'ais', 'ads-b')."
+        }
+      },
+      "required": ["lat", "lon"]
+    },
+    "address": {
+      "type": "object",
+      "description": "Postal or facility address. Used for fixed locations or as a coarse position annotation.",
+      "properties": {
+        "street": { "type": "string" },
+        "locality": { "type": "string", "description": "City or town." },
+        "region": { "type": "string", "description": "State, province, or other subdivision." },
+        "postal_code": { "type": "string" },
+        "country": { "type": "string", "description": "ISO 3166-1 alpha-2 code." }
+      }
+    },
+    "route": {
+      "type": "object",
+      "description": "Planned or active route. Vehicles in transit MAY publish their route for downstream visibility.",
+      "properties": {
+        "origin": {
+          "type": "string",
+          "description": "PhIP URI or human-readable origin."
+        },
+        "destination": {
+          "type": "string",
+          "description": "PhIP URI or human-readable destination."
+        },
+        "waypoints": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "lat": { "type": "number" },
+              "lon": { "type": "number" },
+              "label": { "type": "string" },
+              "eta": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        "carrier": {
+          "type": "string",
+          "description": "PhIP URI of the carrier actor (shipping line, trucking company, courier).",
+          "pattern": "^phip://[A-Za-z0-9.-]+/[A-Za-z0-9._~%-]+(?:/[A-Za-z0-9._~%-]+)+$"
+        }
+      }
+    },
+    "geofence": {
+      "type": "object",
+      "description": "Optional geofence for fixed locations or campus-scale facilities.",
+      "properties": {
+        "center": {
+          "type": "object",
+          "properties": {
+            "lat": { "type": "number" },
+            "lon": { "type": "number" }
+          },
+          "required": ["lat", "lon"]
+        },
+        "radius_m": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Radius in metres for a circular geofence."
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,123 @@
+{
+  "description": "Ed25519 signing cases per Section 11.1. `raw` cases sign arbitrary byte strings; `events` cases sign the canonical JSON of a PhIP event with the `signature` field stripped. Signatures are deterministic (RFC 8032). `signature_b64url` is the raw base64url-encoded 64-byte signature — the reference implementation stores this directly in `signature.value`.",
+  "raw": [
+    {
+      "name": "test-key-alice-empty",
+      "key_id": "test-key-alice",
+      "message_hex": "",
+      "signature_b64url": "W974TACETei0tryTPeVKs6OeuMaXtIm2UlrLYZCZZk243FvQNEsHKwMDYEwCOUdAioVfgJq7C_dffy6shNKMDQ"
+    },
+    {
+      "name": "test-key-alice-one-byte",
+      "key_id": "test-key-alice",
+      "message_hex": "61",
+      "signature_b64url": "ZJ_LPVWL2DwyfVMz9tf2guNTWDQg5NzdsUJCXi-GstNaGrB_qZyh_fuaMvBoplrXexV4l_vSk1Td9GtvXAUgBw"
+    },
+    {
+      "name": "test-key-alice-abc",
+      "key_id": "test-key-alice",
+      "message_hex": "616263",
+      "signature_b64url": "jkfxsusVfdnFcJ3U-9tUY25CCGl5k49jSaLXM935vDmqfZItrEzVn_rbMDsmXDDkK3h6zZ2kCsnnWWqWpkSOBQ"
+    },
+    {
+      "name": "test-key-alice-lorem",
+      "key_id": "test-key-alice",
+      "message_hex": "54686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f67",
+      "signature_b64url": "LLS_hbDMrh-VrRerDXo_1hRozRYGcBT7wvDTdVd8NSUbkm4_H3Lh0_8z0zsPu_fM4J31Yys3xuTukdl7WZ5eCA"
+    },
+    {
+      "name": "test-key-bob-empty",
+      "key_id": "test-key-bob",
+      "message_hex": "",
+      "signature_b64url": "xIBX_6oDtJOtD0YfTjCtQC8DHDwwk5h_UkXHEdWK6h9iQkSml-xQWGoiL150wAQ9wD-DGRmY4YNhlCZzBNGVDg"
+    },
+    {
+      "name": "test-key-bob-one-byte",
+      "key_id": "test-key-bob",
+      "message_hex": "61",
+      "signature_b64url": "Uym0M2AbUzuKTeKaioz3Se8j8KorPyx6x4x3dxQGPNp1_ZM_8tawlNnLoGWc7GllNhi3HN2fHJG0zMS1wUEbCA"
+    },
+    {
+      "name": "test-key-bob-abc",
+      "key_id": "test-key-bob",
+      "message_hex": "616263",
+      "signature_b64url": "bExcYg3QvCa2HtDZxcYvf5IURSDPOAKBK92HYx65XGYUKdbOQYCt8Mv7LLu_8kMhPCAUzdxwv1PLdBPy0b-LCQ"
+    },
+    {
+      "name": "test-key-bob-lorem",
+      "key_id": "test-key-bob",
+      "message_hex": "54686520717569636b2062726f776e20666f78206a756d7073206f76657220746865206c617a7920646f67",
+      "signature_b64url": "Zom11L03KX5hmWRE-RYO-wNYgbWfk7JxJWpl7Gzea3yo3UxFLKdhfCXRxn9LEgzeHBGZPdiKvhewtwztv2TfCA"
+    }
+  ],
+  "events": [
+    {
+      "name": "note-event",
+      "key_id": "test-key-alice",
+      "event_unsigned": {
+        "event_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "phip_id": "phip://acme.example/parts/widget-001",
+        "type": "note",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "actor": "phip://acme.example/actors/alice",
+        "previous_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "payload": {
+          "text": "hello world"
+        }
+      },
+      "canonical_bytes_hex": "7b226163746f72223a22706869703a2f2f61636d652e6578616d706c652f6163746f72732f616c696365222c226576656e745f6964223a2261316232633364342d653566362d373839302d616263642d656631323334353637383930222c227061796c6f6164223a7b2274657874223a2268656c6c6f20776f726c64227d2c22706869705f6964223a22706869703a2f2f61636d652e6578616d706c652f70617274732f7769646765742d303031222c2270726576696f75735f68617368223a227368613235363a65336230633434323938666331633134396166626634633839393666623932343237616534316534363439623933346361343935393931623738353262383535222c2274696d657374616d70223a22323032362d30312d30315430303a30303a30305a222c2274797065223a226e6f7465227d",
+      "signature_b64url": "vpkC3WU03Oc2o1DjGusZm41EopZNeYlWTwiBHGEnK4neEchGbUnnLJltJjEnIy_yyzArxqQ0N8Ype__QTE1MCA",
+      "signed_event": {
+        "event_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "phip_id": "phip://acme.example/parts/widget-001",
+        "type": "note",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "actor": "phip://acme.example/actors/alice",
+        "previous_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "payload": {
+          "text": "hello world"
+        },
+        "signature": {
+          "algorithm": "Ed25519",
+          "key_id": "test-key-alice",
+          "value": "vpkC3WU03Oc2o1DjGusZm41EopZNeYlWTwiBHGEnK4neEchGbUnnLJltJjEnIy_yyzArxqQ0N8Ype__QTE1MCA"
+        }
+      }
+    },
+    {
+      "name": "state-transition",
+      "key_id": "test-key-bob",
+      "event_unsigned": {
+        "event_id": "b2c3d4e5-f6a7-8901-bcde-f23456789012",
+        "phip_id": "phip://acme.example/parts/widget-001",
+        "type": "state_transition",
+        "timestamp": "2026-01-02T12:00:00Z",
+        "actor": "phip://acme.example/actors/bob",
+        "previous_hash": "sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        "payload": {
+          "from": "stock",
+          "to": "deployed"
+        }
+      },
+      "canonical_bytes_hex": "7b226163746f72223a22706869703a2f2f61636d652e6578616d706c652f6163746f72732f626f62222c226576656e745f6964223a2262326333643465352d663661372d383930312d626364652d663233343536373839303132222c227061796c6f6164223a7b2266726f6d223a2273746f636b222c22746f223a226465706c6f796564227d2c22706869705f6964223a22706869703a2f2f61636d652e6578616d706c652f70617274732f7769646765742d303031222c2270726576696f75735f68617368223a227368613235363a64656164626565666465616462656566646561646265656664656164626565666465616462656566646561646265656664656164626565666465616462656566222c2274696d657374616d70223a22323032362d30312d30325431323a30303a30305a222c2274797065223a2273746174655f7472616e736974696f6e227d",
+      "signature_b64url": "UyWm-8bQdsneVuViQSWOeR8XG4Cx5zA0UQt8_8X2er7_MCNXgp7Lrjm6M_R0HtJbXicm8G-dxoLrQpWk8lVFCw",
+      "signed_event": {
+        "event_id": "b2c3d4e5-f6a7-8901-bcde-f23456789012",
+        "phip_id": "phip://acme.example/parts/widget-001",
+        "type": "state_transition",
+        "timestamp": "2026-01-02T12:00:00Z",
+        "actor": "phip://acme.example/actors/bob",
+        "previous_hash": "sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        "payload": {
+          "from": "stock",
+          "to": "deployed"
+        },
+        "signature": {
+          "algorithm": "Ed25519",
+          "key_id": "test-key-bob",
+          "value": "UyWm-8bQdsneVuViQSWOeR8XG4Cx5zA0UQt8_8X2er7_MCNXgp7Lrjm6M_R0HtJbXicm8G-dxoLrQpWk8lVFCw"
+        }
+      }
+    }
+  ]
+}

@@ -5,6 +5,20 @@ All notable changes to the PhIP specification will be documented in this file.
 ## [0.1.0-draft] — 2026-04-09
 
 ### Added
+- Interop prerequisites for multi-language client libraries (`phip-js`, 
+  `phip-py`, etc.): language-agnostic test vectors in `tests/vectors/` 
+  covering JCS canonicalization, SHA-256 event hashing, Ed25519 signing 
+  and verification, URI parsing, hash-chain continuity, lifecycle 
+  transitions, and the self-signed bootstrap key pattern; HTTP black-box 
+  conformance suite in `tests/conformance/` for PhIP servers.
+- Section 4.3 resolver discovery, caching, and redirect policy: authority 
+  name is the resolver identity (no DNS TXT/SRV lookups), `ETag`/
+  `Cache-Control` guidance with tight `max-age` for active objects and 
+  long `max-age` for terminal states, same-authority-only redirect 
+  constraint, and `POST`-preserving redirect rules.
+- Section 12.6 `/.well-known/phip/meta` capability document for resolver 
+  self-description (protocol version, namespaces, supported operations, 
+  schema namespaces). Resolver publication is optional.
 - Four namespace schemas: `phip:mechanical` (dimensions, weight, material, 
   tolerances), `phip:datacenter` (rack position, power, thermal, network 
   ports), `phip:software` (firmware, config hashes, OS, drivers), and 
@@ -89,3 +103,107 @@ All notable changes to the PhIP specification will be documented in this file.
   handling, capability token scopes, pagination, error responses
 - All reference implementation blockers resolved — 18 total issues resolved, 
   23 deferred to post-v0.1
+- **A10: Resolver discovery, caching, redirects** — Section 4.3.1 through 
+  4.3.3 plus new Section 12.6 metadata document. Section 13 conformance 
+  suite TODO replaced with pointer to `tests/vectors/` and 
+  `tests/conformance/`. 19 issues resolved total, 22 deferred.
+- **All five remaining Low-severity issues resolved** — 41 issues 
+  resolved total, 0 deferred. Spec backlog clean for v0.1.0-draft:
+  - **A33: Batch operations** — new §12.5: non-atomic 
+    `/objects/{ns}/batch` and `/push/{ns}/batch`, 1000-event cap, 
+    per-event results, 207 Multi-Status on partial success.
+  - **A34: Offline / air-gapped resolution** — new §4.3.4: warm 
+    cache and signed PhIP bundle format (`manifest.json` + 
+    `objects/`, `history/`, `keys/`), full chain verification on 
+    import, replay-on-reconnect for buffered writes.
+  - **A35: HTTP authentication** — new §12.8: 
+    `Authorization: PhIP-Capability` is the only protocol-level 
+    auth scheme; mTLS is a transport overlay; non-protocol 
+    endpoints (admin, health) free to use any scheme; 
+    basic/bearer/API-key MUST NOT route restricted reads or writes.
+  - **A36: Conformance levels** — §13 restructured into Full / 
+    Read-Only / Mirror / Client-Only classes. New 
+    `OPERATION_NOT_SUPPORTED` (405) error code. New `conformance_class` 
+    field in `/meta`.
+  - **A37: Schema versioning** — new §8.4: semver MAJOR.MINOR with 
+    explicit additive vs. breaking change rules, versioned `$id` 
+    URLs, all v0.1 schemas seeded with `version: "1.0"`. 12-month 
+    minimum compatibility window after a MAJOR bump.
+
+- Section 12 sub-numbering: 12.5 (was Error Responses) → 12.6, 12.6 
+  (was Metadata Document) → 12.7, plus new 12.5 Batch Operations and 
+  new 12.8 HTTP Authentication. All cross-references updated.
+
+- **All twelve remaining Medium-severity issues resolved** — 36 issues 
+  resolved total, 5 deferred (12 Medium → 0 Medium, all remaining are 
+  Low):
+  - **A2: Yield fraction math** — non-negative real values in [0,1]; 
+    sum-per-input ≤ 1 + ε with ε = 1e-6; missing fractions are 
+    "unknown" not implicit-equal-share; numeric representation 
+    guidance. New §10.4.1, §10.4.2.
+  - **A3: Geographic position** — new `phip:geo` namespace covering 
+    WGS 84 position (lat/lon/altitude/accuracy/source), address, 
+    route with waypoints/carrier, and geofence. New 
+    `schemas/geo.json`.
+  - **A4: Multi-party custody transfer** — new §11.3.7 specifying the 
+    prior-custodian → carrier → next-custodian token chain with 
+    pickup/transit/delivery roles, disruption handling, and 
+    sub-delegation rules.
+  - **A5: Lot split mass conservation** — new §10.5.1: 
+    `sum(resulting) ≤ source + ε` with optional `loss_quantity`; 
+    `lot_merge` enforces equality; unit-mismatched merges require a 
+    `process` event.
+  - **A6: Measurement payload** — new §11.4.2 normative shape: 
+    `metric`/`value`/`unit`/`as_of`/`method`/`uncertainty`/
+    `thresholds`/`outcome`/`external_ref`/`samples`. Derived-vs-raw 
+    distinction preserved through history.
+  - **A12: Authority delegation** — new §4.5.1–4.5.5: 
+    `delegations` array in `/meta`, scoped ops, revocation via 
+    metadata edit, depth-limited sub-delegation.
+  - **A14: Lot fungibility** — new §6.4: required `fungible` boolean 
+    on lot identity; non-fungible lots MUST `contains` member items.
+  - **A15: Lot quantity tracking** — new §6.4.1: 
+    `identity.quantity` (`value`/`unit`/`as_of`/`precision`); 
+    partial draw-down via `attribute_update`; split reserved for 
+    new sub-lots.
+  - **A16: Regulatory jurisdiction** — added `jurisdiction`, 
+    `regulatory_authority`, `applicable_jurisdictions`, and 
+    `export_control` to `phip:compliance` schema.
+  - **A18: Uncertainty qualifiers** — new §5.2.1: parallel 
+    `<field>_quality` convention with `confidence`/`source`/`as_of`/
+    `corrected_from`/`note`. Tools MUST treat qualified and 
+    unqualified fields identically for matching.
+  - **A29: connected_to bidirectional cross-org** — new §7.3: 
+    relations are owned by the writing object; cross-authority 
+    inverses are not required; asymmetric relations are not proof 
+    of physical state.
+  - **A30: Dangling relations** — new §7.4: graceful-degradation 
+    rules; new `DANGLING_RELATION` (422) error for same-authority 
+    broken refs; cross-authority targets verified lazily by readers.
+
+- **All five remaining High-severity issues resolved** — 24 issues 
+  resolved total, 17 deferred (5 High → 0 High):
+  - **A26: Read access control** — `phip:access` namespace 
+    (`public`/`authenticated`/`capability`/`private`); capability tokens 
+    gain `read_state`, `read_history`, `read_query` scopes; new 
+    `ACCESS_DENIED` (403) error code; QUERY silently omits inaccessible 
+    objects. New Section 11.5; new `schemas/access.json`.
+  - **A27: Privacy / GDPR annex** — new Section 15 (Privacy 
+    Considerations). No-raw-PII rule, `phip:personal_data` salted-
+    commitment convention, `phip:external_record` for off-chain 
+    references, salt deletion as the erasure mechanism, pseudonymous-
+    actor pattern. IANA renumbered to Section 16, References to 17.
+  - **A1: Sub-object addressing** — Section 4.4 expanded with 4.4.1 
+    (when to register), 4.4.2 (no lifecycle inheritance), 4.4.3 (paths 
+    are informational; `contained_in` is normative).
+  - **A13: Design revision model** — new `design` object type on the 
+    manufacturing track; new Section 6.2 (design objects with 
+    `part_number`/`revision`); new Section 6.3 tightening 
+    `instance_of` to require a `design` target; new `supersedes`/
+    `superseded_by` relation pair.
+  - **A23: Authority transfer / domain death** — new Section 4.6: 
+    long-lived root authority key, new `authority_transfer` event 
+    type, authority record at `/.well-known/authority`, mirror hosts 
+    via `mirror_urls`, same-authority redirect rule relaxed for 
+    verified transfers. `/meta` document gains `root_key`, 
+    `mirror_urls`, `successor` fields.

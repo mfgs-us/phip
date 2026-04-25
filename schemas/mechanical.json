@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mfgs-us/phip/schemas/mechanical.json",
+  "version": "1.0",
   "title": "phip:mechanical",
   "description": "Schema for the phip:mechanical attribute namespace. Covers physical dimensions, weight, material composition, and dimensional tolerances. Applicable to object types: material, component, assembly, system.",
 

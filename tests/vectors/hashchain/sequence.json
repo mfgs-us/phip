@@ -1,0 +1,61 @@
+{
+  "description": "A three-event hash chain. Implementations MUST verify that each event's `previous_hash` equals the SHA-256-prefixed hash of the full canonical-JSON serialization of the preceding event (signature field included), per Section 10.3. The first event's previous_hash is the literal string \"genesis\".",
+  "phip_id": "phip://acme.example/parts/widget-001",
+  "events": [
+    {
+      "event_id": "10000000-0000-4000-a000-000000000001",
+      "phip_id": "phip://acme.example/parts/widget-001",
+      "type": "created",
+      "timestamp": "2026-01-01T00:00:00Z",
+      "actor": "phip://acme.example/actors/alice",
+      "previous_hash": "genesis",
+      "payload": {
+        "object_type": "component",
+        "state": "concept"
+      },
+      "signature": {
+        "algorithm": "Ed25519",
+        "key_id": "test-key-alice",
+        "value": "ZF-vki7r3b14FV_hlC11btq0Czd9B3UcNteGwX-iq975qQ3alommNDQfaM-5l5Y-JLRiqd0ve6BdZlf60iIECQ"
+      }
+    },
+    {
+      "event_id": "10000000-0000-4000-a000-000000000002",
+      "phip_id": "phip://acme.example/parts/widget-001",
+      "type": "state_transition",
+      "timestamp": "2026-01-02T00:00:00Z",
+      "actor": "phip://acme.example/actors/alice",
+      "previous_hash": "sha256:740ade2a24534da3201a8bd246da54c525556a338c94442098673dfad63f6270",
+      "payload": {
+        "from": "concept",
+        "to": "design"
+      },
+      "signature": {
+        "algorithm": "Ed25519",
+        "key_id": "test-key-alice",
+        "value": "AH70h_68c4z2VYll09bivsVGd1K5YSQT7kMDYqenv7YnGCr0iop6d6AxqziDiPfTGnt_TokNgCGC2X2PF36qAw"
+      }
+    },
+    {
+      "event_id": "10000000-0000-4000-a000-000000000003",
+      "phip_id": "phip://acme.example/parts/widget-001",
+      "type": "note",
+      "timestamp": "2026-01-03T00:00:00Z",
+      "actor": "phip://acme.example/actors/bob",
+      "previous_hash": "sha256:edfa1024542fc2072c2507012ae4c0be535d907106bf8fcd3a04f54e76c6b5c3",
+      "payload": {
+        "text": "Design review complete"
+      },
+      "signature": {
+        "algorithm": "Ed25519",
+        "key_id": "test-key-bob",
+        "value": "OEuY5Od8Aks7ooYUxiAxOGceeOowFQr9bQUrrjTgw3MYu_RlJ2qjeboHHeTAHjpB4yHThEKEqJZM5pz7k5v0Ag"
+      }
+    }
+  ],
+  "expected_hashes": [
+    "sha256:740ade2a24534da3201a8bd246da54c525556a338c94442098673dfad63f6270",
+    "sha256:edfa1024542fc2072c2507012ae4c0be535d907106bf8fcd3a04f54e76c6b5c3",
+    "sha256:90741b003a5d337918a67793343c4cabd64ffefa59d765558f74e8dd619a88e9"
+  ]
+}

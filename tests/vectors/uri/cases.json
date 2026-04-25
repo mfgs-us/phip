@@ -1,0 +1,62 @@
+{
+  "description": "PhIP URI parsing per Section 4. Valid URIs decompose into authority, namespace, local_id, and optional sub_path (array of path segments after local_id, if any). Invalid URIs MUST be rejected.",
+  "valid": [
+    {
+      "uri": "phip://acme.example/parts/widget-001",
+      "authority": "acme.example",
+      "namespace": "parts",
+      "local_id": "widget-001",
+      "sub_path": []
+    },
+    {
+      "uri": "phip://acme.example/parts/widget-001/sensors/temp-1",
+      "authority": "acme.example",
+      "namespace": "parts",
+      "local_id": "widget-001",
+      "sub_path": [
+        "sensors",
+        "temp-1"
+      ]
+    },
+    {
+      "uri": "phip://sub.acme.example/lots/LOT-2026-04-001",
+      "authority": "sub.acme.example",
+      "namespace": "lots",
+      "local_id": "LOT-2026-04-001",
+      "sub_path": []
+    },
+    {
+      "uri": "phip://acme-mfg.co.uk/racks/R1.A.07",
+      "authority": "acme-mfg.co.uk",
+      "namespace": "racks",
+      "local_id": "R1.A.07",
+      "sub_path": []
+    }
+  ],
+  "invalid": [
+    {
+      "uri": "http://acme.example/parts/x",
+      "reason": "wrong scheme"
+    },
+    {
+      "uri": "phip:/acme.example/parts/x",
+      "reason": "missing //"
+    },
+    {
+      "uri": "phip://acme.example/parts",
+      "reason": "missing local-id segment"
+    },
+    {
+      "uri": "phip://acme.example//widget",
+      "reason": "empty namespace segment"
+    },
+    {
+      "uri": "phip:///parts/widget",
+      "reason": "empty authority"
+    },
+    {
+      "uri": "phip://acme example/parts/x",
+      "reason": "space in authority"
+    }
+  ]
+}

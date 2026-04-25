@@ -1,0 +1,35 @@
+{
+  "description": "Event hash cases per Section 10.3. `hash` is the SHA-256 of the UTF-8 bytes of the JCS canonicalization of `input`, prefixed with 'sha256:' and encoded as 64 lowercase hex characters.",
+  "cases": [
+    {
+      "name": "empty-object",
+      "input": {},
+      "canonical": "{}",
+      "hash": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "name": "single-key",
+      "input": {
+        "a": 1
+      },
+      "canonical": "{\"a\":1}",
+      "hash": "sha256:015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862"
+    },
+    {
+      "name": "example-event",
+      "input": {
+        "event_id": "c2b8d7e4-8f4a-4e3c-9a5f-10e4d8f9a1b2",
+        "phip_id": "phip://acme.example/parts/widget-001",
+        "type": "note",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "actor": "phip://acme.example/actors/alice",
+        "previous_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "payload": {
+          "text": "hello"
+        }
+      },
+      "canonical": "{\"actor\":\"phip://acme.example/actors/alice\",\"event_id\":\"c2b8d7e4-8f4a-4e3c-9a5f-10e4d8f9a1b2\",\"payload\":{\"text\":\"hello\"},\"phip_id\":\"phip://acme.example/parts/widget-001\",\"previous_hash\":\"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"type\":\"note\"}",
+      "hash": "sha256:8d746f5f333643627aca8dcca31f9ce1dd83dbec610921794631367d0c16a227"
+    }
+  ]
+}
