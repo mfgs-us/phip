@@ -2,7 +2,7 @@
   "name": "phip-tests",
   "version": "0.1.0-draft",
   "private": true,
-  "description": "Language-agnostic test vectors and HTTP conformance suite for PhIP. Fixtures in vectors/ are consumed by implementations in any language to verify byte-for-byte agreement on JCS, hashing, Ed25519 signing, URI parsing, hash chains, and lifecycle transitions. The conformance suite in conformance/ black-box tests any PhIP server over HTTP.",
+  "description": "Language-agnostic test vectors and HTTP conformance suite for PhIP. Fixtures in vectors/ are consumed by implementations in any language to verify byte-for-byte agreement on JCS, hashing, Ed25519 signing, URI parsing, hash chains, lifecycle transitions, capability tokens, and bundles. The conformance suite in conformance/ is also published as @phip/conformance — install globally via `npm install -g @phip/conformance` and run `phip-conformance <url>` against any resolver.",
   "scripts": {
     "generate": "node vectors/generate.js",
     "conformance": "node conformance/run.js",

@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // PhIP HTTP conformance suite.
 //
 // Exercises any PhIP server over HTTPS (or HTTP) to verify it implements the
@@ -5,8 +6,11 @@
 // black-box test — the server must only expose the standard endpoints under
 // /.well-known/phip/.
 //
-// Usage:   node conformance/run.js <base-url> [namespace]
-// Example: node conformance/run.js http://localhost:3000 conformance
+// Installed via `npm install -g @phip/conformance`, then:
+//   phip-conformance <base-url> [--namespace ns] [--authority host]
+//
+// Or run directly from a checkout:
+//   node conformance/run.js <base-url>
 //
 // The suite creates a self-signed bootstrap actor, then a component object,
 // pushes state transitions and attribute updates, reads history, runs
@@ -19,8 +23,6 @@
 const crypto = require("node:crypto");
 const http = require("node:http");
 const https = require("node:https");
-const path = require("node:path");
-const fs = require("node:fs");
 const canonicalize = require("canonicalize");
 
 // Parse argv: base-url is positional; namespace and authority can be
@@ -28,7 +30,21 @@ const canonicalize = require("canonicalize");
 // MUST be overridable because PhIP authorities are names, not network
 // addresses — a server bound to authority "acme.example" can be reached at
 // http://localhost:8080 during testing.
+function printUsage() {
+  console.error(
+    "usage: phip-conformance <base-url> [--namespace <ns>] [--authority <auth>]\n" +
+    "\n" +
+    "  <base-url>     URL where the resolver is reachable (e.g. https://acme.example).\n" +
+    "  --namespace    Namespace to create test objects under. Default: 'conformance'.\n" +
+    "  --authority    PhIP authority name the resolver claims to be. Defaults to the\n" +
+    "                 URL hostname; override when network address ≠ authority name."
+  );
+}
 const raw = process.argv.slice(2);
+if (raw.length === 0 || raw.includes("--help") || raw.includes("-h")) {
+  printUsage();
+  process.exit(raw.length === 0 ? 2 : 0);
+}
 let BASE_URL = null;
 let NAMESPACE = "conformance";
 let AUTHORITY_OVERRIDE = null;
@@ -40,9 +56,7 @@ for (let i = 0; i < raw.length; i++) {
   else NAMESPACE = a;
 }
 if (!BASE_URL) {
-  console.error(
-    "usage: node conformance/run.js <base-url> [--namespace <ns>] [--authority <auth>]"
-  );
+  printUsage();
   process.exit(2);
 }
 
@@ -53,12 +67,18 @@ const AUTHORITY = AUTHORITY_OVERRIDE || new URL(BASE_URL).host.split(":")[0];
 const KEY_PHIP_ID = `phip://${AUTHORITY}/${NAMESPACE}/${KEY_LOCAL_ID}`;
 const OBJ_PHIP_ID = `phip://${AUTHORITY}/${NAMESPACE}/${OBJ_LOCAL_ID}`;
 
-// ── crypto helpers (using fixed test keypair from vectors) ────────────
-
-const keypairs = JSON.parse(
-  fs.readFileSync(path.join(__dirname, "..", "vectors", "ed25519", "keypair.json"), "utf8")
-).keys;
-const TESTKEY = keypairs[0];
+// ── crypto helpers ──────────────────────────────────────────────────
+//
+// The conformance suite needs a deterministic Ed25519 keypair for
+// signing the bootstrap actor's events. We embed one directly so the
+// package is self-contained when published — no dependency on the
+// vectors/ tree. This is the same `test-key-alice` keypair from
+// `tests/vectors/ed25519/keypair.json`, kept in sync.
+const TESTKEY = {
+  private_pkcs8_b64:
+    "MC4CAQAwBQYDK2VwBCIEILYVuTR2efrX2+iRiMd6EmrgZNMaFhxPi8HpoS/N7PUh",
+  public_raw_b64url: "-PMJVmvQQLw38uBOg3w4CXVk6CkadzUozxMUTzq96Ws",
+};
 
 const privateKey = crypto.createPrivateKey({
   key: Buffer.from(TESTKEY.private_pkcs8_b64, "base64"),
@@ -951,6 +971,72 @@ async function main() {
     rXfer.status === 201,
     `got ${rXfer.status}`,
   );
+
+  // ── 20. Federation mechanics (light, opt-in) ──────────────────────
+  // Full federation conformance (cross-authority token verification,
+  // redirect-chain following, mirror serving) requires standing up a
+  // counterpart authority — out of scope for a single-URL conformance
+  // run. Reference test scenarios live at
+  // https://github.com/mfgs-us/phip/blob/main/reference/test/federation.js
+  // and can be ported per-implementation.
+  //
+  // What we CAN test from a single URL: if the operator has configured
+  // their resolver with delegations or a transferred-successor, probe
+  // the redirect mechanics. Skipped if /meta does not advertise the
+  // relevant federation state.
+  console.log(`\n[20] federation mechanics (opt-in)`);
+  if (!metaPublished) {
+    console.log("  (skipped — /meta not published, can't detect federation config)");
+  } else {
+    if (Array.isArray(rMeta.body.delegations) && rMeta.body.delegations.length > 0) {
+      const d = rMeta.body.delegations[0];
+      const probeNs = d.namespace;
+      const probeId = (d.prefix || "") + "probe-" + RUN_ID;
+      const rDeleg = await request("GET", RESOLVE(probeNs, probeId));
+      test(
+        "delegation: GET to delegated slice returns 307",
+        rDeleg.status === 307,
+        `got ${rDeleg.status}`,
+      );
+      test(
+        "delegation: Location header points at delegate_authority",
+        rDeleg.headers && rDeleg.headers["location"]
+          && rDeleg.headers["location"].includes(d.delegate_authority),
+      );
+      test(
+        "delegation: PhIP-Delegation header carries the namespace",
+        rDeleg.headers && rDeleg.headers["phip-delegation"] === probeNs,
+      );
+    } else {
+      console.log("  (skipped delegation probe — /meta.delegations empty)");
+    }
+
+    if (rMeta.body.successor && rMeta.body.successor.authority) {
+      const succ = rMeta.body.successor;
+      const probeNs = (succ.namespaces && succ.namespaces[0]) || "any";
+      if (probeNs === "*") {
+        console.log("  (skipped successor probe — wildcard namespaces, no test target)");
+      } else {
+        const rXfer = await request("GET", RESOLVE(probeNs, "probe-" + RUN_ID));
+        test(
+          "successor: GET to transferred namespace returns 308",
+          rXfer.status === 308,
+          `got ${rXfer.status}`,
+        );
+        test(
+          "successor: Location header points at successor authority",
+          rXfer.headers && rXfer.headers["location"]
+            && rXfer.headers["location"].includes(succ.authority),
+        );
+        test(
+          "successor: PhIP-Transfer-Event header carries the event id",
+          rXfer.headers && rXfer.headers["phip-transfer-event"] === succ.transfer_event_id,
+        );
+      }
+    } else {
+      console.log("  (skipped successor probe — /meta.successor absent)");
+    }
+  }
 
   // ── summary ───────────────────────────────────────────────────────
   console.log(`\n${pass} passed, ${fail} failed`);

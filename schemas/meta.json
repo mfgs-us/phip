@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mfgs-us/phip/schemas/meta.json",
+  "version": "1.0",
+  "title": "PhIP Resolver Metadata Document",
+  "description": "Schema for the resolver metadata document at /.well-known/phip/meta defined in Section 12.7. This document describes the resolver's protocol version, supported operations, conformance class, and federation state (root key, delegations, successor, mirror URLs).",
+
+  "type": "object",
+  "required": ["protocol_version", "authority", "namespaces"],
+  "properties": {
+    "protocol_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+(\\.[0-9]+)?(-[A-Za-z0-9.-]+)?$",
+      "description": "Spec version this resolver targets (e.g. '0.1.0-draft')."
+    },
+    "authority": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9.-]+$",
+      "description": "DNS-like authority name this resolver serves."
+    },
+    "namespaces": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Namespaces this resolver will accept CREATEs into."
+    },
+    "schema_namespaces": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": "Schema namespace identifier, optionally with @-prefixed semver (e.g. 'phip:mechanical@1.2'). Bare names mean 'latest supported'."
+      }
+    },
+    "supported_operations": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["create", "get", "push", "query", "history", "batch_create", "batch_push"]
+      }
+    },
+    "query_capabilities": {
+      "type": "object",
+      "description": "Optional map describing supported filter operators, glob syntax, sort orders. Schema is open-ended.",
+      "additionalProperties": true
+    },
+    "root_key": {
+      "$ref": "#/$defs/phipUri",
+      "description": "PhIP URI of this authority's root key (Section 4.6.1). Used as the trust anchor for authority-transfer verification."
+    },
+    "mirror_urls": {
+      "type": "array",
+      "items": { "type": "string", "format": "uri" },
+      "description": "URLs of read-only mirrors hosting frozen snapshots of this authority's records (Section 4.6.5)."
+    },
+    "successor": {
+      "type": "object",
+      "required": ["authority", "namespaces", "transfer_event_id"],
+      "additionalProperties": true,
+      "description": "Present iff this authority has been transferred (Section 4.6.2). Clients SHOULD redirect subsequent requests to the successor.",
+      "properties": {
+        "authority": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9.-]+$",
+          "description": "DNS-like authority name of the successor."
+        },
+        "namespaces": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "description": "Namespaces transferred to the successor. Use ['*'] to transfer all."
+        },
+        "transfer_event_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Event ID of the originating authority_transfer event. Required for the PhIP-Transfer-Event header."
+        },
+        "effective_from": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "delegations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/delegation" },
+      "description": "Active sub-namespace delegations (Section 4.5.1)."
+    },
+    "conformance_class": {
+      "type": "string",
+      "enum": ["full", "read-only", "mirror", "client-only"],
+      "description": "Conformance class advertised by this resolver. Absence implies 'full' for v0.1 compatibility."
+    },
+    "batch_max_events": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "description": "Advisory maximum events per batch CREATE/PUSH. Resolvers MAY enforce a lower limit than the spec's 1000 cap."
+    },
+    "mtls_required": {
+      "type": "boolean",
+      "description": "If true, clients MUST present a TLS client certificate (Section 12.8.1)."
+    },
+    "mtls_ca_bundle_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "URL where the resolver publishes its CA bundle for client cert issuance."
+    }
+  },
+  "additionalProperties": true,
+
+  "$defs": {
+    "phipUri": {
+      "type": "string",
+      "pattern": "^phip://[A-Za-z0-9.-]+/[A-Za-z0-9._~%-]+(?:/[A-Za-z0-9._~%-]+)+$"
+    },
+    "delegation": {
+      "type": "object",
+      "required": ["namespace", "delegate_authority", "delegate_root_key", "scope", "effective_from"],
+      "additionalProperties": true,
+      "properties": {
+        "namespace": {
+          "type": "string",
+          "description": "Namespace being delegated. '*' delegates the entire authority."
+        },
+        "prefix": {
+          "type": "string",
+          "description": "Local-id prefix the delegation applies to. If omitted, applies to the entire namespace."
+        },
+        "delegate_authority": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9.-]+$"
+        },
+        "delegate_root_key": {
+          "$ref": "#/$defs/phipUri"
+        },
+        "scope": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["create", "push", "get", "history", "query"]
+          },
+          "minItems": 1
+        },
+        "effective_from": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expires": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "revocable": {
+          "type": "boolean",
+          "default": true
+        },
+        "max_subdelegation": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum further delegation depth permitted under this entry. 0 = no sub-delegation. Absent = unlimited."
+        }
+      }
+    }
+  }
+}

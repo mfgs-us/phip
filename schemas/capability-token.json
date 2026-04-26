@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mfgs-us/phip/schemas/capability-token.json",
+  "version": "1.0",
+  "title": "PhIP Capability Token",
+  "description": "Schema for the PhIP capability token format defined in Section 11.3. Tokens are JSON objects, base64url-encoded for transport in the `Authorization: PhIP-Capability <token>` header. Cryptographic verification (signature, key resolution, scope/filter/expiry checks) is enforced by resolvers per Section 11.3.4 and is outside the scope of this schema.",
+
+  "type": "object",
+  "required": [
+    "phip_capability",
+    "token_id",
+    "granted_by",
+    "granted_to",
+    "scope",
+    "object_filter",
+    "not_before",
+    "expires",
+    "signature"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "phip_capability": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Token format version. MUST be '1.0' for this revision of the spec. Future spec MINOR bumps may add optional fields without changing this value; v1.0 validators MUST tolerate unknown fields (additionalProperties: true)."
+    },
+    "token_id": {
+      "type": "string",
+      "description": "Unique identifier for this token, typically a UUID. Used for revocation lists and replay detection.",
+      "minLength": 1
+    },
+    "granted_by": {
+      "$ref": "#/$defs/phipUri",
+      "description": "PhIP URI of the actor who issued the token. MUST resolve to an `actor` object in the granting authority's namespace. Per §11.2, key resources are themselves actors, so a key URI like `phip://acme.example/keys/ops-2026` is a valid grantor."
+    },
+    "granted_to": {
+      "$ref": "#/$defs/phipUri",
+      "description": "PhIP URI of the actor authorized to use this token. The resolver compares against the requesting actor (when externally authenticated)."
+    },
+    "scope": {
+      "type": "string",
+      "enum": [
+        "push_events",
+        "push_state",
+        "push_measurements",
+        "push_relations",
+        "read_state",
+        "read_history",
+        "read_query"
+      ],
+      "description": "Permission level granted by this token. A single token has exactly one scope; combining scopes requires issuing multiple tokens. See Section 11.3.2."
+    },
+    "object_filter": {
+      "type": "string",
+      "description": "Glob pattern matching target `phip_id`s. Uses `*` for wildcard. Tokens that match no object are useless; tokens that match `phip://*` grant authority-wide access (rare in practice).",
+      "minLength": 1
+    },
+    "not_before": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp before which the token is invalid."
+    },
+    "expires": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp after which the token is invalid. Resolvers SHOULD reject tokens with expiry windows greater than 90 days (Section 11.3.5)."
+    },
+    "signature": {
+      "$ref": "#/$defs/signature",
+      "description": "Ed25519 signature over the JCS canonicalization of the token with the `signature` field stripped, computed by the granting authority."
+    }
+  },
+
+  "$defs": {
+    "phipUri": {
+      "type": "string",
+      "pattern": "^phip://[A-Za-z0-9.-]+/[A-Za-z0-9._~%-]+(?:/[A-Za-z0-9._~%-]+)+$"
+    },
+    "signature": {
+      "type": "object",
+      "required": ["algorithm", "key_id", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "Ed25519"
+        },
+        "key_id": {
+          "$ref": "#/$defs/phipUri",
+          "description": "PhIP URI of the key actor that signed this token. The resolver fetches this actor's `phip:keys` material to verify the signature."
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^(base64url:)?[A-Za-z0-9_-]{86}$",
+          "description": "Base64url-encoded 64-byte Ed25519 signature (exactly 86 base64url characters, no padding). The optional `base64url:` prefix is permitted for compatibility with spec examples."
+        }
+      }
+    }
+  }
+}

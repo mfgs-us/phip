@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mfgs-us/phip/schemas/authority-transfer-payload.json",
+  "version": "1.0",
+  "title": "PhIP authority_transfer Event Payload",
+  "description": "Schema for the payload field of an authority_transfer event (Section 4.6.2). The event itself follows the standard event shape (event_id, phip_id, type, timestamp, actor, previous_hash, payload, signature) and MUST be signed by the source authority's root key. This schema validates only the payload object.",
+
+  "type": "object",
+  "required": ["namespaces", "successor_authority", "successor_root_key", "effective_from"],
+  "additionalProperties": false,
+  "properties": {
+    "namespaces": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1,
+      "description": "Array of namespace names being transferred. MAY be ['*'] to transfer all namespaces under the source authority."
+    },
+    "successor_authority": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9.-]+$",
+      "description": "Authority name (DNS label) the namespaces transfer to."
+    },
+    "successor_root_key": {
+      "type": "string",
+      "pattern": "^phip://[A-Za-z0-9.-]+/[A-Za-z0-9._~%-]+(?:/[A-Za-z0-9._~%-]+)+$",
+      "description": "PhIP URI of the successor's root key resource. Verifiers MUST resolve and validate this key before accepting subsequent events under the transferred namespaces."
+    },
+    "effective_from": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp at which the transfer takes effect. Events appended after this timestamp under the transferred namespaces SHOULD be hosted by the successor."
+    },
+    "rationale": {
+      "type": "string",
+      "description": "Optional human-readable explanation (e.g. 'Acme acquired by NewCo (2026-12-15). Sole transfer of all asset records.')."
+    }
+  }
+}

@@ -548,4 +548,382 @@ writeJson("bootstrap/example.json", {
   created_event: bootstrapCreated,
 });
 
+// ─────────────────────────────────────────────────────────────────────
+// 9. Capability token verification — Section 11.3
+// ─────────────────────────────────────────────────────────────────────
+//
+// A token is a JSON object base64url-encoded for transport in the
+// `Authorization: PhIP-Capability <token>` header. Each case here gives
+// the signed token (object form), its base64url-encoded transport form,
+// the key that should verify the signature, and the expected outcome
+// after a full §11.3.4 check sequence.
+//
+// `verification_time` is the ISO 8601 instant the verifier should
+// pretend "now" is — needed for deterministic expired/not-yet-valid
+// outcomes.
+
+function signToken(unsigned, keyId) {
+  const key = getKey(keyId);
+  const { signature, ...rest } = unsigned;
+  const sig = crypto.sign(null, canonicalBytes(rest), key.privateKey);
+  return {
+    ...rest,
+    signature: {
+      algorithm: "Ed25519",
+      key_id: `phip://acme.example/keys/${keyId}`,
+      value: sig.toString("base64url"),
+    },
+  };
+}
+
+function tokenB64(token) {
+  return Buffer.from(JSON.stringify(token), "utf8").toString("base64url");
+}
+
+const ALICE_KEY_URI = "phip://acme.example/keys/test-key-alice";
+const BOB_KEY_URI = "phip://other.example/keys/test-key-bob";
+
+// Base "valid" token shape — variants tweak fields.
+const baseToken = {
+  phip_capability: "1.0",
+  token_id: "00000000-0000-4000-a000-000000000001",
+  granted_by: ALICE_KEY_URI,
+  granted_to: ALICE_KEY_URI,
+  scope: "push_events",
+  object_filter: "phip://acme.example/parts/*",
+  not_before: "2026-01-15T00:00:00Z",
+  expires: "2026-12-31T23:59:59Z",
+};
+
+const tokenCases = [];
+
+// 1. Valid push token, intra-authority signer.
+{
+  const t = signToken({ ...baseToken }, "test-key-alice");
+  tokenCases.push({
+    name: "valid-push-token",
+    signed_token: t,
+    transport_b64url: tokenB64(t),
+    verifying_key_id: "test-key-alice",
+    verification_time: "2026-06-01T00:00:00Z",
+    expected: "valid",
+  });
+}
+
+// 2. Valid read_state token.
+{
+  const t = signToken(
+    { ...baseToken, token_id: "00000000-0000-4000-a000-000000000002", scope: "read_state" },
+    "test-key-alice",
+  );
+  tokenCases.push({
+    name: "valid-read-state-token",
+    signed_token: t,
+    transport_b64url: tokenB64(t),
+    verifying_key_id: "test-key-alice",
+    verification_time: "2026-06-01T00:00:00Z",
+    expected: "valid",
+  });
+}
+
+// 3. Expired token (verification time after `expires`).
+{
+  const t = signToken({ ...baseToken, token_id: "00000000-0000-4000-a000-000000000003" }, "test-key-alice");
+  tokenCases.push({
+    name: "expired-token",
+    signed_token: t,
+    transport_b64url: tokenB64(t),
+    verifying_key_id: "test-key-alice",
+    verification_time: "2027-01-01T00:00:00Z",
+    expected: "expired",
+  });
+}
+
+// 4. Not-yet-valid token (verification time before `not_before`).
+{
+  const t = signToken({ ...baseToken, token_id: "00000000-0000-4000-a000-000000000004" }, "test-key-alice");
+  tokenCases.push({
+    name: "not-yet-valid-token",
+    signed_token: t,
+    transport_b64url: tokenB64(t),
+    verifying_key_id: "test-key-alice",
+    verification_time: "2025-01-01T00:00:00Z",
+    expected: "not_yet_valid",
+  });
+}
+
+// 5. Object filter does not match the requested object.
+{
+  const t = signToken(
+    { ...baseToken, token_id: "00000000-0000-4000-a000-000000000005", object_filter: "phip://acme.example/lots/*" },
+    "test-key-alice",
+  );
+  tokenCases.push({
+    name: "object-filter-mismatch",
+    signed_token: t,
+    transport_b64url: tokenB64(t),
+    verifying_key_id: "test-key-alice",
+    verification_time: "2026-06-01T00:00:00Z",
+    requested_object: "phip://acme.example/parts/widget-001",
+    expected: "object_filter_mismatch",
+  });
+}
+
+// 6. Forged signature (correct shape, garbage signature bytes).
+{
+  const t = signToken({ ...baseToken, token_id: "00000000-0000-4000-a000-000000000006" }, "test-key-alice");
+  t.signature.value = Buffer.alloc(64, 0).toString("base64url");
+  tokenCases.push({
+    name: "forged-signature",
+    signed_token: t,
+    transport_b64url: tokenB64(t),
+    verifying_key_id: "test-key-alice",
+    verification_time: "2026-06-01T00:00:00Z",
+    expected: "invalid_signature",
+  });
+}
+
+// 7. Tampered token (sign with one body, then mutate a field — sig fails).
+{
+  const t = signToken(
+    { ...baseToken, token_id: "00000000-0000-4000-a000-000000000007", scope: "read_state" },
+    "test-key-alice",
+  );
+  // Mutate scope after signing — verification must fail.
+  t.scope = "push_events";
+  tokenCases.push({
+    name: "tampered-after-signing",
+    signed_token: t,
+    transport_b64url: tokenB64(t),
+    verifying_key_id: "test-key-alice",
+    verification_time: "2026-06-01T00:00:00Z",
+    expected: "invalid_signature",
+    notes: "The signed_token JSON shown is the post-mutation form (scope='push_events'). The signature was computed over the pre-mutation form (scope='read_state'); verifying against the displayed content fails by design.",
+  });
+}
+
+// 8. Read scope coverage: read_history covers read_state. (Validity check
+//    only — the actual scope-coverage logic is enforced server-side.)
+{
+  const t = signToken(
+    { ...baseToken, token_id: "00000000-0000-4000-a000-000000000008", scope: "read_history" },
+    "test-key-alice",
+  );
+  tokenCases.push({
+    name: "read-history-token",
+    signed_token: t,
+    transport_b64url: tokenB64(t),
+    verifying_key_id: "test-key-alice",
+    verification_time: "2026-06-01T00:00:00Z",
+    requested_scope: "read_state",
+    expected: "valid",
+  });
+}
+
+// 9. Foreign signer (key_id at another authority). Verification requires
+//    federation; intra-authority resolvers MUST reject with
+//    INVALID_CAPABILITY rather than verifying against a local key.
+{
+  const t = signToken({ ...baseToken, token_id: "00000000-0000-4000-a000-000000000009" }, "test-key-bob");
+  t.signature.key_id = BOB_KEY_URI;
+  tokenCases.push({
+    name: "foreign-signer-token",
+    signed_token: t,
+    transport_b64url: tokenB64(t),
+    verifying_key_id: "test-key-bob",
+    verification_time: "2026-06-01T00:00:00Z",
+    expected: "valid",
+    notes: "Intra-authority resolvers without federation MUST reject as INVALID_CAPABILITY. Federated resolvers fetch test-key-bob's actor and verify; result is valid.",
+  });
+}
+
+writeJson("token/cases.json", {
+  description:
+    "Capability token verification cases per Section 11.3.4. Each case " +
+    "gives the signed token (JSON object form), its base64url-encoded " +
+    "transport form (the value placed in the Authorization header), the " +
+    "key id whose public key verifies the signature, and the expected " +
+    "outcome after a full verification sequence at the given " +
+    "`verification_time`. Implementations MUST produce identical " +
+    "verification results given the same inputs.",
+  cases: tokenCases,
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// 10. PhIP bundle — Section 4.3.4
+// ─────────────────────────────────────────────────────────────────────
+//
+// A PhIP bundle is a signed archive of object states + their event
+// histories + key resources. The transport format is a tar archive on
+// disk; for the test vectors we represent the same content as a single
+// JSON document (`bundle/example.json`) with the manifest, objects,
+// histories, and keys inlined. Implementations that pack/unpack the
+// tar form MUST produce manifest bytes and signatures byte-identical
+// to the inlined form here.
+//
+// Cases:
+//   - one-object  : single component object, single key
+//   - multi-object: two objects sharing the same signing key
+//   - tampered    : valid bundle with one event mutated post-signing
+//                   (used to assert verification rejects)
+
+const BUNDLE_AUTHORITY = "acme.example";
+const BUNDLE_PRODUCER_KEY_PHIP = `phip://${BUNDLE_AUTHORITY}/keys/test-key-alice`;
+
+function buildBundle({ name, objects, producerKeyId, snapshotOf }) {
+  // Each `object` here is the result of running a small history (genesis
+  // CREATE only, in this minimal generator). Bundles in production
+  // typically include richer histories; the test vectors keep it small
+  // for clarity.
+  const objectEntries = objects.map((o) => o.event);
+  const keys = {};
+  // Embed the producer's key actor so the bundle is self-verifying.
+  keys[BUNDLE_PRODUCER_KEY_PHIP] = {
+    phip_id: BUNDLE_PRODUCER_KEY_PHIP,
+    object_type: "actor",
+    state: "active",
+    attributes: {
+      "phip:keys": {
+        kty: "OKP",
+        crv: "Ed25519",
+        x: getKey(producerKeyId).public_raw_b64url,
+        not_before: "2026-01-01T00:00:00Z",
+        not_after: "2030-01-01T00:00:00Z",
+      },
+    },
+    history: [],
+  };
+
+  // Manifest fields excluding signature.
+  const manifestUnsigned = {
+    bundle_version: "1.0",
+    created_at: "2026-04-15T00:00:00Z",
+    created_by: BUNDLE_PRODUCER_KEY_PHIP,
+    authority: BUNDLE_AUTHORITY,
+    objects: objectEntries.map((e) => ({
+      phip_id: e.phip_id,
+      history_head: hashEvent(e),
+    })),
+  };
+  if (snapshotOf) manifestUnsigned.snapshot_of = snapshotOf;
+
+  const sig = crypto.sign(
+    null,
+    canonicalBytes(manifestUnsigned),
+    getKey(producerKeyId).privateKey,
+  );
+  const manifest = {
+    ...manifestUnsigned,
+    signature: {
+      algorithm: "Ed25519",
+      key_id: BUNDLE_PRODUCER_KEY_PHIP,
+      value: sig.toString("base64url"),
+    },
+  };
+
+  // Per-object projections (state at history_head).
+  const objectProjections = {};
+  const historyJsonl = {};
+  for (const e of objectEntries) {
+    objectProjections[e.phip_id] = {
+      phip_id: e.phip_id,
+      object_type: e.payload.object_type,
+      state: e.payload.state,
+      identity: e.payload.identity || undefined,
+      attributes: e.payload.attributes || undefined,
+      relations: e.payload.relations || [],
+      history_length: 1,
+      history_head: hashEvent(e),
+    };
+    historyJsonl[e.phip_id] = [e]; // single event per object in this minimal vector
+  }
+
+  return {
+    name,
+    description: `Bundle: ${name}`,
+    manifest,
+    objects: objectProjections,
+    history: historyJsonl,
+    keys,
+  };
+}
+
+// Build a couple of objects to bundle.
+const bundleObj1Phip = `phip://${BUNDLE_AUTHORITY}/parts/widget-001`;
+const bundleObj1 = signEvent(
+  {
+    event_id: "30000000-0000-4000-a000-000000000001",
+    phip_id: bundleObj1Phip,
+    type: "created",
+    timestamp: "2026-04-01T00:00:00Z",
+    actor: BUNDLE_PRODUCER_KEY_PHIP,
+    previous_hash: "genesis",
+    payload: {
+      object_type: "component",
+      state: "stock",
+      identity: { serial: "WGT-001" },
+    },
+  },
+  "test-key-alice",
+);
+
+const bundleObj2Phip = `phip://${BUNDLE_AUTHORITY}/parts/widget-002`;
+const bundleObj2 = signEvent(
+  {
+    event_id: "30000000-0000-4000-a000-000000000002",
+    phip_id: bundleObj2Phip,
+    type: "created",
+    timestamp: "2026-04-02T00:00:00Z",
+    actor: BUNDLE_PRODUCER_KEY_PHIP,
+    previous_hash: "genesis",
+    payload: {
+      object_type: "component",
+      state: "stock",
+      identity: { serial: "WGT-002" },
+    },
+  },
+  "test-key-alice",
+);
+
+// Bundle 1: single object.
+const oneObjectBundle = buildBundle({
+  name: "one-object",
+  objects: [{ event: bundleObj1 }],
+  producerKeyId: "test-key-alice",
+  snapshotOf: "2026-04-15T00:00:00Z",
+});
+
+// Bundle 2: multi-object snapshot.
+const multiObjectBundle = buildBundle({
+  name: "multi-object",
+  objects: [{ event: bundleObj1 }, { event: bundleObj2 }],
+  producerKeyId: "test-key-alice",
+});
+
+// Bundle 3: tampered — valid manifest signature, but one event was mutated
+// post-bundling. Consumers MUST reject during chain verification, not
+// during manifest verification.
+const tamperedBundle = JSON.parse(JSON.stringify(multiObjectBundle));
+tamperedBundle.name = "tampered-event";
+tamperedBundle.description = "Bundle: tampered-event (event mutated post-signing)";
+// Mutate one event's payload field after the manifest was signed.
+tamperedBundle.history[bundleObj1Phip][0].payload.identity.serial = "WGT-FORGED";
+
+writeJson("bundle/cases.json", {
+  description:
+    "PhIP bundle test vectors (Section 4.3.4). Bundles in production are " +
+    "tar archives on disk; here each bundle is represented as a single " +
+    "JSON document with the manifest, per-object state projections, " +
+    "per-object history events, and embedded key resources inlined. " +
+    "Implementations that pack/unpack the tar form MUST produce manifest " +
+    "bytes and signatures byte-identical to the inlined form here.\n\n" +
+    "Verification expectations per case:\n" +
+    "  - one-object: full chain verifies against manifest\n" +
+    "  - multi-object: full chain for both objects verifies\n" +
+    "  - tampered-event: manifest signature verifies BUT chain " +
+    "verification of widget-001 fails because the event payload was " +
+    "mutated after the manifest was produced",
+  bundles: [oneObjectBundle, multiObjectBundle, tamperedBundle],
+});
+
 console.log("\nall vectors written.");

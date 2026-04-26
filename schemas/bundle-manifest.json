@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mfgs-us/phip/schemas/bundle-manifest.json",
+  "version": "1.0",
+  "title": "PhIP Bundle Manifest",
+  "description": "Schema for the manifest.json file inside a PhIP bundle (Section 4.3.4). The bundle is a signed archive of objects + their histories + key resources, used for offline distribution, mirror snapshots, and air-gapped imports. The manifest is the integrity anchor: signed by the producer's actor key, listing every object in the bundle with its expected history_head.",
+
+  "type": "object",
+  "required": ["bundle_version", "created_at", "created_by", "authority", "objects", "signature"],
+  "additionalProperties": false,
+  "properties": {
+    "bundle_version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Bundle format version. MUST be '1.0' for this revision of the spec."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp the bundle was assembled."
+    },
+    "created_by": {
+      "$ref": "#/$defs/phipUri",
+      "description": "PhIP URI of the actor producing the bundle. The signature is computed by this actor's key."
+    },
+    "authority": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9.-]+$",
+      "description": "Source authority name whose records are being bundled."
+    },
+    "objects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["phip_id", "history_head"],
+        "additionalProperties": false,
+        "properties": {
+          "phip_id": {
+            "$ref": "#/$defs/phipUri",
+            "description": "Object identifier."
+          },
+          "history_head": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "description": "SHA-256 hash of the latest event in this object's history at bundle-creation time."
+          }
+        }
+      },
+      "minItems": 1,
+      "description": "Per-object integrity manifest. Consumers verify each object's full chain reaches this head."
+    },
+    "snapshot_of": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Optional ISO 8601 timestamp this bundle represents the source authority's state as of. For continuously-updated mirror snapshots; absent for ad-hoc exports."
+    },
+    "signature": {
+      "type": "object",
+      "required": ["algorithm", "key_id", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "Ed25519"
+        },
+        "key_id": {
+          "$ref": "#/$defs/phipUri",
+          "description": "Key actor URI whose phip:keys material verifies this signature. SHOULD match created_by or be derivable from it."
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^(base64url:)?[A-Za-z0-9_-]{86}$",
+          "description": "Base64url-encoded 64-byte Ed25519 signature (exactly 86 base64url characters, no padding) over the JCS canonicalization of the manifest with the signature field removed."
+        }
+      }
+    }
+  },
+
+  "$defs": {
+    "phipUri": {
+      "type": "string",
+      "pattern": "^phip://[A-Za-z0-9.-]+/[A-Za-z0-9._~%-]+(?:/[A-Za-z0-9._~%-]+)+$"
+    }
+  }
+}

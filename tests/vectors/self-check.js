@@ -203,5 +203,137 @@ console.log("\n[lifecycle]");
   }
 }
 
+// ── Capability tokens ──────────────────────────────────────────────
+console.log("\n[token]");
+{
+  const { keys } = load("ed25519/keypair.json");
+  const keyMap = Object.fromEntries(keys.map((k) => [k.id, loadKey(k)]));
+  const { cases } = load("token/cases.json");
+  for (const c of cases) {
+    // Verify signature reproducibility against the named verifying key.
+    const verifyingKey = keyMap[c.verifying_key_id];
+    const { signature, ...rest } = c.signed_token;
+    const verified = crypto.verify(
+      null,
+      Buffer.from(canonicalize(rest), "utf8"),
+      verifyingKey.publicKey,
+      Buffer.from(signature.value, "base64url"),
+    );
+    // Cases with expected = invalid_signature MUST NOT verify.
+    // Cases with any other expected value MUST verify (the rejection
+    // happens at higher-level checks: expiry, scope, filter, etc.)
+    const sigShouldVerify = c.expected !== "invalid_signature";
+    assert(
+      verified === sigShouldVerify,
+      `token ${c.name} signature ${sigShouldVerify ? "verifies" : "does not verify"}`,
+    );
+
+    // Transport round-trip: base64url-decoded transport form MUST parse
+    // back to the same JSON.
+    const decoded = JSON.parse(Buffer.from(c.transport_b64url, "base64url").toString("utf8"));
+    assert(
+      JSON.stringify(decoded) === JSON.stringify(c.signed_token),
+      `token ${c.name} transport_b64url round-trips to signed_token`,
+    );
+
+    // Time-window checks: assert the case's `verification_time` matches
+    // the expected outcome by spec rule.
+    if (c.expected === "expired") {
+      assert(
+        Date.parse(c.verification_time) > Date.parse(c.signed_token.expires),
+        `token ${c.name} verification_time is after expires`,
+      );
+    } else if (c.expected === "not_yet_valid") {
+      assert(
+        Date.parse(c.verification_time) < Date.parse(c.signed_token.not_before),
+        `token ${c.name} verification_time is before not_before`,
+      );
+    }
+  }
+}
+
+// ── Bundles ────────────────────────────────────────────────────────
+console.log("\n[bundle]");
+{
+  const { keys: testKeys } = load("ed25519/keypair.json");
+  const keyMap = Object.fromEntries(testKeys.map((k) => [k.id, loadKey(k)]));
+  const aliceJwkX = testKeys.find((k) => k.id === "test-key-alice").public_raw_b64url;
+  const alicePub = (() => {
+    const raw = Buffer.from(aliceJwkX, "base64url");
+    const spki = Buffer.concat([
+      Buffer.from("302a300506032b6570032100", "hex"),
+      raw,
+    ]);
+    return crypto.createPublicKey({ key: spki, format: "der", type: "spki" });
+  })();
+  void keyMap;
+
+  const { bundles } = load("bundle/cases.json");
+  for (const b of bundles) {
+    // Step 1: manifest signature MUST verify in all cases (the tampered
+    // case mutates events, not the manifest).
+    const { signature, ...manifestRest } = b.manifest;
+    const manifestVerified = crypto.verify(
+      null,
+      Buffer.from(canonicalize(manifestRest), "utf8"),
+      alicePub,
+      Buffer.from(signature.value, "base64url"),
+    );
+    assert(manifestVerified, `bundle ${b.name} manifest signature verifies`);
+
+    // Step 2: each declared object's history MUST hash-chain to the
+    // manifest's claimed history_head.
+    let chainOk = true;
+    for (const objEntry of b.manifest.objects) {
+      const events = b.history[objEntry.phip_id];
+      if (!events || !events.length) {
+        chainOk = false;
+        break;
+      }
+      // Walk the chain forward, verifying each event signature and
+      // each previous_hash linkage.
+      for (let i = 0; i < events.length; i++) {
+        const ev = events[i];
+        const prevHash = i === 0 ? "genesis" : hashEvent(events[i - 1]);
+        if (ev.previous_hash !== prevHash) {
+          chainOk = false;
+          break;
+        }
+        const { signature: evSig, ...evRest } = ev;
+        const sigOk = crypto.verify(
+          null,
+          Buffer.from(canonicalize(evRest), "utf8"),
+          alicePub,
+          Buffer.from(evSig.value, "base64url"),
+        );
+        if (!sigOk) {
+          chainOk = false;
+          break;
+        }
+      }
+      // Final head matches the manifest's claim.
+      const finalHead = hashEvent(events[events.length - 1]);
+      if (finalHead !== objEntry.history_head) {
+        chainOk = false;
+      }
+      if (!chainOk) break;
+    }
+
+    if (b.name === "tampered-event") {
+      assert(!chainOk, `bundle ${b.name} chain verification REJECTS (tampered event)`);
+    } else {
+      assert(chainOk, `bundle ${b.name} chain verification accepts`);
+    }
+
+    // Step 3: embedded keys MUST contain the producer's key actor.
+    const producerKeyUri = b.manifest.created_by;
+    const producerKey = b.keys[producerKeyUri];
+    assert(
+      producerKey && producerKey.attributes && producerKey.attributes["phip:keys"],
+      `bundle ${b.name} embeds producer's key actor`,
+    );
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
