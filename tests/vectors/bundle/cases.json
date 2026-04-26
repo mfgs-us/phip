@@ -1,0 +1,305 @@
+{
+  "description": "PhIP bundle test vectors (Section 4.3.4). Bundles in production are tar archives on disk; here each bundle is represented as a single JSON document with the manifest, per-object state projections, per-object history events, and embedded key resources inlined. Implementations that pack/unpack the tar form MUST produce manifest bytes and signatures byte-identical to the inlined form here.\n\nVerification expectations per case:\n  - one-object: full chain verifies against manifest\n  - multi-object: full chain for both objects verifies\n  - tampered-event: manifest signature verifies BUT chain verification of widget-001 fails because the event payload was mutated after the manifest was produced",
+  "bundles": [
+    {
+      "name": "one-object",
+      "description": "Bundle: one-object",
+      "manifest": {
+        "bundle_version": "1.0",
+        "created_at": "2026-04-15T00:00:00Z",
+        "created_by": "phip://acme.example/keys/test-key-alice",
+        "authority": "acme.example",
+        "objects": [
+          {
+            "phip_id": "phip://acme.example/parts/widget-001",
+            "history_head": "sha256:a4745351866fe79f491c4a58af347b741617c22c0cf200fa233cc1b4c7e59948"
+          }
+        ],
+        "snapshot_of": "2026-04-15T00:00:00Z",
+        "signature": {
+          "algorithm": "Ed25519",
+          "key_id": "phip://acme.example/keys/test-key-alice",
+          "value": "lLvlQ4GNuMQTH89OB2zf5iqAyClE4ziZMlyuSs22r40yC8S6P7h2FOMwYjQSjAZkCj6U_2EdoVlbXlYDWdrAAA"
+        }
+      },
+      "objects": {
+        "phip://acme.example/parts/widget-001": {
+          "phip_id": "phip://acme.example/parts/widget-001",
+          "object_type": "component",
+          "state": "stock",
+          "identity": {
+            "serial": "WGT-001"
+          },
+          "relations": [],
+          "history_length": 1,
+          "history_head": "sha256:a4745351866fe79f491c4a58af347b741617c22c0cf200fa233cc1b4c7e59948"
+        }
+      },
+      "history": {
+        "phip://acme.example/parts/widget-001": [
+          {
+            "event_id": "30000000-0000-4000-a000-000000000001",
+            "phip_id": "phip://acme.example/parts/widget-001",
+            "type": "created",
+            "timestamp": "2026-04-01T00:00:00Z",
+            "actor": "phip://acme.example/keys/test-key-alice",
+            "previous_hash": "genesis",
+            "payload": {
+              "object_type": "component",
+              "state": "stock",
+              "identity": {
+                "serial": "WGT-001"
+              }
+            },
+            "signature": {
+              "algorithm": "Ed25519",
+              "key_id": "test-key-alice",
+              "value": "KhVBxZdWMzQSB8wKxoCpl1dol6_8PNew-KOfXdw5vXU3rnj0Kqqavbs7Lbf2ZEX_X03V4ctCZhLqQTjvT7YJDA"
+            }
+          }
+        ]
+      },
+      "keys": {
+        "phip://acme.example/keys/test-key-alice": {
+          "phip_id": "phip://acme.example/keys/test-key-alice",
+          "object_type": "actor",
+          "state": "active",
+          "attributes": {
+            "phip:keys": {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "-PMJVmvQQLw38uBOg3w4CXVk6CkadzUozxMUTzq96Ws",
+              "not_before": "2026-01-01T00:00:00Z",
+              "not_after": "2030-01-01T00:00:00Z"
+            }
+          },
+          "history": []
+        }
+      }
+    },
+    {
+      "name": "multi-object",
+      "description": "Bundle: multi-object",
+      "manifest": {
+        "bundle_version": "1.0",
+        "created_at": "2026-04-15T00:00:00Z",
+        "created_by": "phip://acme.example/keys/test-key-alice",
+        "authority": "acme.example",
+        "objects": [
+          {
+            "phip_id": "phip://acme.example/parts/widget-001",
+            "history_head": "sha256:a4745351866fe79f491c4a58af347b741617c22c0cf200fa233cc1b4c7e59948"
+          },
+          {
+            "phip_id": "phip://acme.example/parts/widget-002",
+            "history_head": "sha256:a7bca0052129ebf8acee407803efa9ee58a4337e48e196e1f8f75b561de3c5a5"
+          }
+        ],
+        "signature": {
+          "algorithm": "Ed25519",
+          "key_id": "phip://acme.example/keys/test-key-alice",
+          "value": "RzSHfu4MItsbxFXu-2gxPznE5ObH9anllA35ewrhcNM3vN1eMQZ58nB-fMAEPWCn_CsmnegxR5Epx-xyH5RtBQ"
+        }
+      },
+      "objects": {
+        "phip://acme.example/parts/widget-001": {
+          "phip_id": "phip://acme.example/parts/widget-001",
+          "object_type": "component",
+          "state": "stock",
+          "identity": {
+            "serial": "WGT-001"
+          },
+          "relations": [],
+          "history_length": 1,
+          "history_head": "sha256:a4745351866fe79f491c4a58af347b741617c22c0cf200fa233cc1b4c7e59948"
+        },
+        "phip://acme.example/parts/widget-002": {
+          "phip_id": "phip://acme.example/parts/widget-002",
+          "object_type": "component",
+          "state": "stock",
+          "identity": {
+            "serial": "WGT-002"
+          },
+          "relations": [],
+          "history_length": 1,
+          "history_head": "sha256:a7bca0052129ebf8acee407803efa9ee58a4337e48e196e1f8f75b561de3c5a5"
+        }
+      },
+      "history": {
+        "phip://acme.example/parts/widget-001": [
+          {
+            "event_id": "30000000-0000-4000-a000-000000000001",
+            "phip_id": "phip://acme.example/parts/widget-001",
+            "type": "created",
+            "timestamp": "2026-04-01T00:00:00Z",
+            "actor": "phip://acme.example/keys/test-key-alice",
+            "previous_hash": "genesis",
+            "payload": {
+              "object_type": "component",
+              "state": "stock",
+              "identity": {
+                "serial": "WGT-001"
+              }
+            },
+            "signature": {
+              "algorithm": "Ed25519",
+              "key_id": "test-key-alice",
+              "value": "KhVBxZdWMzQSB8wKxoCpl1dol6_8PNew-KOfXdw5vXU3rnj0Kqqavbs7Lbf2ZEX_X03V4ctCZhLqQTjvT7YJDA"
+            }
+          }
+        ],
+        "phip://acme.example/parts/widget-002": [
+          {
+            "event_id": "30000000-0000-4000-a000-000000000002",
+            "phip_id": "phip://acme.example/parts/widget-002",
+            "type": "created",
+            "timestamp": "2026-04-02T00:00:00Z",
+            "actor": "phip://acme.example/keys/test-key-alice",
+            "previous_hash": "genesis",
+            "payload": {
+              "object_type": "component",
+              "state": "stock",
+              "identity": {
+                "serial": "WGT-002"
+              }
+            },
+            "signature": {
+              "algorithm": "Ed25519",
+              "key_id": "test-key-alice",
+              "value": "eSONT0z6h4ESKMFbEXf0rcAwnS8wY4JvqicUxr8Q1HuBoTOB1m6-u2bavp0-cv-6HydgaxKVU7wV4_jNF7M5CA"
+            }
+          }
+        ]
+      },
+      "keys": {
+        "phip://acme.example/keys/test-key-alice": {
+          "phip_id": "phip://acme.example/keys/test-key-alice",
+          "object_type": "actor",
+          "state": "active",
+          "attributes": {
+            "phip:keys": {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "-PMJVmvQQLw38uBOg3w4CXVk6CkadzUozxMUTzq96Ws",
+              "not_before": "2026-01-01T00:00:00Z",
+              "not_after": "2030-01-01T00:00:00Z"
+            }
+          },
+          "history": []
+        }
+      }
+    },
+    {
+      "name": "tampered-event",
+      "description": "Bundle: tampered-event (event mutated post-signing)",
+      "manifest": {
+        "bundle_version": "1.0",
+        "created_at": "2026-04-15T00:00:00Z",
+        "created_by": "phip://acme.example/keys/test-key-alice",
+        "authority": "acme.example",
+        "objects": [
+          {
+            "phip_id": "phip://acme.example/parts/widget-001",
+            "history_head": "sha256:a4745351866fe79f491c4a58af347b741617c22c0cf200fa233cc1b4c7e59948"
+          },
+          {
+            "phip_id": "phip://acme.example/parts/widget-002",
+            "history_head": "sha256:a7bca0052129ebf8acee407803efa9ee58a4337e48e196e1f8f75b561de3c5a5"
+          }
+        ],
+        "signature": {
+          "algorithm": "Ed25519",
+          "key_id": "phip://acme.example/keys/test-key-alice",
+          "value": "RzSHfu4MItsbxFXu-2gxPznE5ObH9anllA35ewrhcNM3vN1eMQZ58nB-fMAEPWCn_CsmnegxR5Epx-xyH5RtBQ"
+        }
+      },
+      "objects": {
+        "phip://acme.example/parts/widget-001": {
+          "phip_id": "phip://acme.example/parts/widget-001",
+          "object_type": "component",
+          "state": "stock",
+          "identity": {
+            "serial": "WGT-001"
+          },
+          "relations": [],
+          "history_length": 1,
+          "history_head": "sha256:a4745351866fe79f491c4a58af347b741617c22c0cf200fa233cc1b4c7e59948"
+        },
+        "phip://acme.example/parts/widget-002": {
+          "phip_id": "phip://acme.example/parts/widget-002",
+          "object_type": "component",
+          "state": "stock",
+          "identity": {
+            "serial": "WGT-002"
+          },
+          "relations": [],
+          "history_length": 1,
+          "history_head": "sha256:a7bca0052129ebf8acee407803efa9ee58a4337e48e196e1f8f75b561de3c5a5"
+        }
+      },
+      "history": {
+        "phip://acme.example/parts/widget-001": [
+          {
+            "event_id": "30000000-0000-4000-a000-000000000001",
+            "phip_id": "phip://acme.example/parts/widget-001",
+            "type": "created",
+            "timestamp": "2026-04-01T00:00:00Z",
+            "actor": "phip://acme.example/keys/test-key-alice",
+            "previous_hash": "genesis",
+            "payload": {
+              "object_type": "component",
+              "state": "stock",
+              "identity": {
+                "serial": "WGT-FORGED"
+              }
+            },
+            "signature": {
+              "algorithm": "Ed25519",
+              "key_id": "test-key-alice",
+              "value": "KhVBxZdWMzQSB8wKxoCpl1dol6_8PNew-KOfXdw5vXU3rnj0Kqqavbs7Lbf2ZEX_X03V4ctCZhLqQTjvT7YJDA"
+            }
+          }
+        ],
+        "phip://acme.example/parts/widget-002": [
+          {
+            "event_id": "30000000-0000-4000-a000-000000000002",
+            "phip_id": "phip://acme.example/parts/widget-002",
+            "type": "created",
+            "timestamp": "2026-04-02T00:00:00Z",
+            "actor": "phip://acme.example/keys/test-key-alice",
+            "previous_hash": "genesis",
+            "payload": {
+              "object_type": "component",
+              "state": "stock",
+              "identity": {
+                "serial": "WGT-002"
+              }
+            },
+            "signature": {
+              "algorithm": "Ed25519",
+              "key_id": "test-key-alice",
+              "value": "eSONT0z6h4ESKMFbEXf0rcAwnS8wY4JvqicUxr8Q1HuBoTOB1m6-u2bavp0-cv-6HydgaxKVU7wV4_jNF7M5CA"
+            }
+          }
+        ]
+      },
+      "keys": {
+        "phip://acme.example/keys/test-key-alice": {
+          "phip_id": "phip://acme.example/keys/test-key-alice",
+          "object_type": "actor",
+          "state": "active",
+          "attributes": {
+            "phip:keys": {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "-PMJVmvQQLw38uBOg3w4CXVk6CkadzUozxMUTzq96Ws",
+              "not_before": "2026-01-01T00:00:00Z",
+              "not_after": "2030-01-01T00:00:00Z"
+            }
+          },
+          "history": []
+        }
+      }
+    }
+  ]
+}

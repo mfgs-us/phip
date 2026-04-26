@@ -1,0 +1,206 @@
+{
+  "description": "Capability token verification cases per Section 11.3.4. Each case gives the signed token (JSON object form), its base64url-encoded transport form (the value placed in the Authorization header), the key id whose public key verifies the signature, and the expected outcome after a full verification sequence at the given `verification_time`. Implementations MUST produce identical verification results given the same inputs.",
+  "cases": [
+    {
+      "name": "valid-push-token",
+      "signed_token": {
+        "phip_capability": "1.0",
+        "token_id": "00000000-0000-4000-a000-000000000001",
+        "granted_by": "phip://acme.example/keys/test-key-alice",
+        "granted_to": "phip://acme.example/keys/test-key-alice",
+        "scope": "push_events",
+        "object_filter": "phip://acme.example/parts/*",
+        "not_before": "2026-01-15T00:00:00Z",
+        "expires": "2026-12-31T23:59:59Z",
+        "signature": {
+          "algorithm": "Ed25519",
+          "key_id": "phip://acme.example/keys/test-key-alice",
+          "value": "E8hXXLWVK-0Pd_ofRDY2-pvul0vWYKWv23CV0YR7CUVjZP-wMWCFA11bdYlVDhgUIo3yDfirQVpkFXcoyRjPDA"
+        }
+      },
+      "transport_b64url": "eyJwaGlwX2NhcGFiaWxpdHkiOiIxLjAiLCJ0b2tlbl9pZCI6IjAwMDAwMDAwLTAwMDAtNDAwMC1hMDAwLTAwMDAwMDAwMDAwMSIsImdyYW50ZWRfYnkiOiJwaGlwOi8vYWNtZS5leGFtcGxlL2tleXMvdGVzdC1rZXktYWxpY2UiLCJncmFudGVkX3RvIjoicGhpcDovL2FjbWUuZXhhbXBsZS9rZXlzL3Rlc3Qta2V5LWFsaWNlIiwic2NvcGUiOiJwdXNoX2V2ZW50cyIsIm9iamVjdF9maWx0ZXIiOiJwaGlwOi8vYWNtZS5leGFtcGxlL3BhcnRzLyoiLCJub3RfYmVmb3JlIjoiMjAyNi0wMS0xNVQwMDowMDowMFoiLCJleHBpcmVzIjoiMjAyNi0xMi0zMVQyMzo1OTo1OVoiLCJzaWduYXR1cmUiOnsiYWxnb3JpdGhtIjoiRWQyNTUxOSIsImtleV9pZCI6InBoaXA6Ly9hY21lLmV4YW1wbGUva2V5cy90ZXN0LWtleS1hbGljZSIsInZhbHVlIjoiRThoWFhMV1ZLLTBQZF9vZlJEWTItcHZ1bDB2V1lLV3YyM0NWMFlSN0NVVmpaUC13TVdDRkExMWJkWWxWRGhnVUlvM3lEZmlyUVZwa0ZYY295UmpQREEifX0",
+      "verifying_key_id": "test-key-alice",
+      "verification_time": "2026-06-01T00:00:00Z",
+      "expected": "valid"
+    },
+    {
+      "name": "valid-read-state-token",
+      "signed_token": {
+        "phip_capability": "1.0",
+        "token_id": "00000000-0000-4000-a000-000000000002",
+        "granted_by": "phip://acme.example/keys/test-key-alice",
+        "granted_to": "phip://acme.example/keys/test-key-alice",
+        "scope": "read_state",
+        "object_filter": "phip://acme.example/parts/*",
+        "not_before": "2026-01-15T00:00:00Z",
+        "expires": "2026-12-31T23:59:59Z",
+        "signature": {
+          "algorithm": "Ed25519",
+          "key_id": "phip://acme.example/keys/test-key-alice",
+          "value": "zT1h9lt-mL19ZkvWkQbBTsg1YreXFBd1k2vL4gulSLWGZnvltgVxqaww8mjtudGUq12xynr0ErMzbxiFwtysAg"
+        }
+      },
+      "transport_b64url": "eyJwaGlwX2NhcGFiaWxpdHkiOiIxLjAiLCJ0b2tlbl9pZCI6IjAwMDAwMDAwLTAwMDAtNDAwMC1hMDAwLTAwMDAwMDAwMDAwMiIsImdyYW50ZWRfYnkiOiJwaGlwOi8vYWNtZS5leGFtcGxlL2tleXMvdGVzdC1rZXktYWxpY2UiLCJncmFudGVkX3RvIjoicGhpcDovL2FjbWUuZXhhbXBsZS9rZXlzL3Rlc3Qta2V5LWFsaWNlIiwic2NvcGUiOiJyZWFkX3N0YXRlIiwib2JqZWN0X2ZpbHRlciI6InBoaXA6Ly9hY21lLmV4YW1wbGUvcGFydHMvKiIsIm5vdF9iZWZvcmUiOiIyMDI2LTAxLTE1VDAwOjAwOjAwWiIsImV4cGlyZXMiOiIyMDI2LTEyLTMxVDIzOjU5OjU5WiIsInNpZ25hdHVyZSI6eyJhbGdvcml0aG0iOiJFZDI1NTE5Iiwia2V5X2lkIjoicGhpcDovL2FjbWUuZXhhbXBsZS9rZXlzL3Rlc3Qta2V5LWFsaWNlIiwidmFsdWUiOiJ6VDFoOWx0LW1MMTlaa3ZXa1FiQlRzZzFZcmVYRkJkMWsydkw0Z3VsU0xXR1pudmx0Z1Z4cWF3dzhtanR1ZEdVcTEyeHlucjBFck16YnhpRnd0eXNBZyJ9fQ",
+      "verifying_key_id": "test-key-alice",
+      "verification_time": "2026-06-01T00:00:00Z",
+      "expected": "valid"
+    },
+    {
+      "name": "expired-token",
+      "signed_token": {
+        "phip_capability": "1.0",
+        "token_id": "00000000-0000-4000-a000-000000000003",
+        "granted_by": "phip://acme.example/keys/test-key-alice",
+        "granted_to": "phip://acme.example/keys/test-key-alice",
+        "scope": "push_events",
+        "object_filter": "phip://acme.example/parts/*",
+        "not_before": "2026-01-15T00:00:00Z",
+        "expires": "2026-12-31T23:59:59Z",
+        "signature": {
+          "algorithm": "Ed25519",
+          "key_id": "phip://acme.example/keys/test-key-alice",
+          "value": "vW8jymqqFjgl7jsSHOey8HEPlOGbgoAgG6988hbbbPbrUHzTXfIRjoIvFivIrbNieG9TajoXmRsfL7q-B1aAAQ"
+        }
+      },
+      "transport_b64url": "eyJwaGlwX2NhcGFiaWxpdHkiOiIxLjAiLCJ0b2tlbl9pZCI6IjAwMDAwMDAwLTAwMDAtNDAwMC1hMDAwLTAwMDAwMDAwMDAwMyIsImdyYW50ZWRfYnkiOiJwaGlwOi8vYWNtZS5leGFtcGxlL2tleXMvdGVzdC1rZXktYWxpY2UiLCJncmFudGVkX3RvIjoicGhpcDovL2FjbWUuZXhhbXBsZS9rZXlzL3Rlc3Qta2V5LWFsaWNlIiwic2NvcGUiOiJwdXNoX2V2ZW50cyIsIm9iamVjdF9maWx0ZXIiOiJwaGlwOi8vYWNtZS5leGFtcGxlL3BhcnRzLyoiLCJub3RfYmVmb3JlIjoiMjAyNi0wMS0xNVQwMDowMDowMFoiLCJleHBpcmVzIjoiMjAyNi0xMi0zMVQyMzo1OTo1OVoiLCJzaWduYXR1cmUiOnsiYWxnb3JpdGhtIjoiRWQyNTUxOSIsImtleV9pZCI6InBoaXA6Ly9hY21lLmV4YW1wbGUva2V5cy90ZXN0LWtleS1hbGljZSIsInZhbHVlIjoidlc4anltcXFGamdsN2pzU0hPZXk4SEVQbE9HYmdvQWdHNjk4OGhiYmJQYnJVSHpUWGZJUmpvSXZGaXZJcmJOaWVHOVRham9YbVJzZkw3cS1CMWFBQVEifX0",
+      "verifying_key_id": "test-key-alice",
+      "verification_time": "2027-01-01T00:00:00Z",
+      "expected": "expired"
+    },
+    {
+      "name": "not-yet-valid-token",
+      "signed_token": {
+        "phip_capability": "1.0",
+        "token_id": "00000000-0000-4000-a000-000000000004",
+        "granted_by": "phip://acme.example/keys/test-key-alice",
+        "granted_to": "phip://acme.example/keys/test-key-alice",
+        "scope": "push_events",
+        "object_filter": "phip://acme.example/parts/*",
+        "not_before": "2026-01-15T00:00:00Z",
+        "expires": "2026-12-31T23:59:59Z",
+        "signature": {
+          "algorithm": "Ed25519",
+          "key_id": "phip://acme.example/keys/test-key-alice",
+          "value": "LFt3XrfSBMzjBmKONn52mKUjliniIvWYAef7UJ4j2hPgPzrCPD216CdQc3W7SNL5-_K_MmbUJNG3-93g_JUkAg"
+        }
+      },
+      "transport_b64url": "eyJwaGlwX2NhcGFiaWxpdHkiOiIxLjAiLCJ0b2tlbl9pZCI6IjAwMDAwMDAwLTAwMDAtNDAwMC1hMDAwLTAwMDAwMDAwMDAwNCIsImdyYW50ZWRfYnkiOiJwaGlwOi8vYWNtZS5leGFtcGxlL2tleXMvdGVzdC1rZXktYWxpY2UiLCJncmFudGVkX3RvIjoicGhpcDovL2FjbWUuZXhhbXBsZS9rZXlzL3Rlc3Qta2V5LWFsaWNlIiwic2NvcGUiOiJwdXNoX2V2ZW50cyIsIm9iamVjdF9maWx0ZXIiOiJwaGlwOi8vYWNtZS5leGFtcGxlL3BhcnRzLyoiLCJub3RfYmVmb3JlIjoiMjAyNi0wMS0xNVQwMDowMDowMFoiLCJleHBpcmVzIjoiMjAyNi0xMi0zMVQyMzo1OTo1OVoiLCJzaWduYXR1cmUiOnsiYWxnb3JpdGhtIjoiRWQyNTUxOSIsImtleV9pZCI6InBoaXA6Ly9hY21lLmV4YW1wbGUva2V5cy90ZXN0LWtleS1hbGljZSIsInZhbHVlIjoiTEZ0M1hyZlNCTXpqQm1LT05uNTJtS1VqbGluaUl2V1lBZWY3VUo0ajJoUGdQenJDUEQyMTZDZFFjM1c3U05MNS1fS19NbWJVSk5HMy05M2dfSlVrQWcifX0",
+      "verifying_key_id": "test-key-alice",
+      "verification_time": "2025-01-01T00:00:00Z",
+      "expected": "not_yet_valid"
+    },
+    {
+      "name": "object-filter-mismatch",
+      "signed_token": {
+        "phip_capability": "1.0",
+        "token_id": "00000000-0000-4000-a000-000000000005",
+        "granted_by": "phip://acme.example/keys/test-key-alice",
+        "granted_to": "phip://acme.example/keys/test-key-alice",
+        "scope": "push_events",
+        "object_filter": "phip://acme.example/lots/*",
+        "not_before": "2026-01-15T00:00:00Z",
+        "expires": "2026-12-31T23:59:59Z",
+        "signature": {
+          "algorithm": "Ed25519",
+          "key_id": "phip://acme.example/keys/test-key-alice",
+          "value": "6y8yZicynq38iaPHyw3h54lk9nteXv62cV_D8jLSBepXXj4IN6YKR8cAiVNw_lkdJXl1Qi1zIra6dBFw2DQ_Bw"
+        }
+      },
+      "transport_b64url": "eyJwaGlwX2NhcGFiaWxpdHkiOiIxLjAiLCJ0b2tlbl9pZCI6IjAwMDAwMDAwLTAwMDAtNDAwMC1hMDAwLTAwMDAwMDAwMDAwNSIsImdyYW50ZWRfYnkiOiJwaGlwOi8vYWNtZS5leGFtcGxlL2tleXMvdGVzdC1rZXktYWxpY2UiLCJncmFudGVkX3RvIjoicGhpcDovL2FjbWUuZXhhbXBsZS9rZXlzL3Rlc3Qta2V5LWFsaWNlIiwic2NvcGUiOiJwdXNoX2V2ZW50cyIsIm9iamVjdF9maWx0ZXIiOiJwaGlwOi8vYWNtZS5leGFtcGxlL2xvdHMvKiIsIm5vdF9iZWZvcmUiOiIyMDI2LTAxLTE1VDAwOjAwOjAwWiIsImV4cGlyZXMiOiIyMDI2LTEyLTMxVDIzOjU5OjU5WiIsInNpZ25hdHVyZSI6eyJhbGdvcml0aG0iOiJFZDI1NTE5Iiwia2V5X2lkIjoicGhpcDovL2FjbWUuZXhhbXBsZS9rZXlzL3Rlc3Qta2V5LWFsaWNlIiwidmFsdWUiOiI2eTh5WmljeW5xMzhpYVBIeXczaDU0bGs5bnRlWHY2MmNWX0Q4akxTQmVwWFhqNElONllLUjhjQWlWTndfbGtkSlhsMVFpMXpJcmE2ZEJGdzJEUV9CdyJ9fQ",
+      "verifying_key_id": "test-key-alice",
+      "verification_time": "2026-06-01T00:00:00Z",
+      "requested_object": "phip://acme.example/parts/widget-001",
+      "expected": "object_filter_mismatch"
+    },
+    {
+      "name": "forged-signature",
+      "signed_token": {
+        "phip_capability": "1.0",
+        "token_id": "00000000-0000-4000-a000-000000000006",
+        "granted_by": "phip://acme.example/keys/test-key-alice",
+        "granted_to": "phip://acme.example/keys/test-key-alice",
+        "scope": "push_events",
+        "object_filter": "phip://acme.example/parts/*",
+        "not_before": "2026-01-15T00:00:00Z",
+        "expires": "2026-12-31T23:59:59Z",
+        "signature": {
+          "algorithm": "Ed25519",
+          "key_id": "phip://acme.example/keys/test-key-alice",
+          "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        }
+      },
+      "transport_b64url": "eyJwaGlwX2NhcGFiaWxpdHkiOiIxLjAiLCJ0b2tlbl9pZCI6IjAwMDAwMDAwLTAwMDAtNDAwMC1hMDAwLTAwMDAwMDAwMDAwNiIsImdyYW50ZWRfYnkiOiJwaGlwOi8vYWNtZS5leGFtcGxlL2tleXMvdGVzdC1rZXktYWxpY2UiLCJncmFudGVkX3RvIjoicGhpcDovL2FjbWUuZXhhbXBsZS9rZXlzL3Rlc3Qta2V5LWFsaWNlIiwic2NvcGUiOiJwdXNoX2V2ZW50cyIsIm9iamVjdF9maWx0ZXIiOiJwaGlwOi8vYWNtZS5leGFtcGxlL3BhcnRzLyoiLCJub3RfYmVmb3JlIjoiMjAyNi0wMS0xNVQwMDowMDowMFoiLCJleHBpcmVzIjoiMjAyNi0xMi0zMVQyMzo1OTo1OVoiLCJzaWduYXR1cmUiOnsiYWxnb3JpdGhtIjoiRWQyNTUxOSIsImtleV9pZCI6InBoaXA6Ly9hY21lLmV4YW1wbGUva2V5cy90ZXN0LWtleS1hbGljZSIsInZhbHVlIjoiQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUEifX0",
+      "verifying_key_id": "test-key-alice",
+      "verification_time": "2026-06-01T00:00:00Z",
+      "expected": "invalid_signature"
+    },
+    {
+      "name": "tampered-after-signing",
+      "signed_token": {
+        "phip_capability": "1.0",
+        "token_id": "00000000-0000-4000-a000-000000000007",
+        "granted_by": "phip://acme.example/keys/test-key-alice",
+        "granted_to": "phip://acme.example/keys/test-key-alice",
+        "scope": "push_events",
+        "object_filter": "phip://acme.example/parts/*",
+        "not_before": "2026-01-15T00:00:00Z",
+        "expires": "2026-12-31T23:59:59Z",
+        "signature": {
+          "algorithm": "Ed25519",
+          "key_id": "phip://acme.example/keys/test-key-alice",
+          "value": "G6jfKvYsxw0cRfq5uDlDJkrLmu7Rfk99yLYmYOkiDMVgDCyVd3mNYUJZ5bcA6R0DTgnvMJ-YeorJzr5X0aQ4Cw"
+        }
+      },
+      "transport_b64url": "eyJwaGlwX2NhcGFiaWxpdHkiOiIxLjAiLCJ0b2tlbl9pZCI6IjAwMDAwMDAwLTAwMDAtNDAwMC1hMDAwLTAwMDAwMDAwMDAwNyIsImdyYW50ZWRfYnkiOiJwaGlwOi8vYWNtZS5leGFtcGxlL2tleXMvdGVzdC1rZXktYWxpY2UiLCJncmFudGVkX3RvIjoicGhpcDovL2FjbWUuZXhhbXBsZS9rZXlzL3Rlc3Qta2V5LWFsaWNlIiwic2NvcGUiOiJwdXNoX2V2ZW50cyIsIm9iamVjdF9maWx0ZXIiOiJwaGlwOi8vYWNtZS5leGFtcGxlL3BhcnRzLyoiLCJub3RfYmVmb3JlIjoiMjAyNi0wMS0xNVQwMDowMDowMFoiLCJleHBpcmVzIjoiMjAyNi0xMi0zMVQyMzo1OTo1OVoiLCJzaWduYXR1cmUiOnsiYWxnb3JpdGhtIjoiRWQyNTUxOSIsImtleV9pZCI6InBoaXA6Ly9hY21lLmV4YW1wbGUva2V5cy90ZXN0LWtleS1hbGljZSIsInZhbHVlIjoiRzZqZkt2WXN4dzBjUmZxNXVEbERKa3JMbXU3UmZrOTl5TFltWU9raURNVmdEQ3lWZDNtTllVSlo1YmNBNlIwRFRnbnZNSi1ZZW9ySnpyNVgwYVE0Q3cifX0",
+      "verifying_key_id": "test-key-alice",
+      "verification_time": "2026-06-01T00:00:00Z",
+      "expected": "invalid_signature"
+    },
+    {
+      "name": "read-history-token",
+      "signed_token": {
+        "phip_capability": "1.0",
+        "token_id": "00000000-0000-4000-a000-000000000008",
+        "granted_by": "phip://acme.example/keys/test-key-alice",
+        "granted_to": "phip://acme.example/keys/test-key-alice",
+        "scope": "read_history",
+        "object_filter": "phip://acme.example/parts/*",
+        "not_before": "2026-01-15T00:00:00Z",
+        "expires": "2026-12-31T23:59:59Z",
+        "signature": {
+          "algorithm": "Ed25519",
+          "key_id": "phip://acme.example/keys/test-key-alice",
+          "value": "4EmN9vMtzooV1sW9UMBY1VDAd-K2VZFa8df_F5wzj5BA0xZkJNOAZRheo9zi5sKlF0UNpxvPXJTzJGw_fiTHAg"
+        }
+      },
+      "transport_b64url": "eyJwaGlwX2NhcGFiaWxpdHkiOiIxLjAiLCJ0b2tlbl9pZCI6IjAwMDAwMDAwLTAwMDAtNDAwMC1hMDAwLTAwMDAwMDAwMDAwOCIsImdyYW50ZWRfYnkiOiJwaGlwOi8vYWNtZS5leGFtcGxlL2tleXMvdGVzdC1rZXktYWxpY2UiLCJncmFudGVkX3RvIjoicGhpcDovL2FjbWUuZXhhbXBsZS9rZXlzL3Rlc3Qta2V5LWFsaWNlIiwic2NvcGUiOiJyZWFkX2hpc3RvcnkiLCJvYmplY3RfZmlsdGVyIjoicGhpcDovL2FjbWUuZXhhbXBsZS9wYXJ0cy8qIiwibm90X2JlZm9yZSI6IjIwMjYtMDEtMTVUMDA6MDA6MDBaIiwiZXhwaXJlcyI6IjIwMjYtMTItMzFUMjM6NTk6NTlaIiwic2lnbmF0dXJlIjp7ImFsZ29yaXRobSI6IkVkMjU1MTkiLCJrZXlfaWQiOiJwaGlwOi8vYWNtZS5leGFtcGxlL2tleXMvdGVzdC1rZXktYWxpY2UiLCJ2YWx1ZSI6IjRFbU45dk10em9vVjFzVzlVTUJZMVZEQWQtSzJWWkZhOGRmX0Y1d3pqNUJBMHhaa0pOT0FaUmhlbzl6aTVzS2xGMFVOcHh2UFhKVHpKR3dfZmlUSEFnIn19",
+      "verifying_key_id": "test-key-alice",
+      "verification_time": "2026-06-01T00:00:00Z",
+      "requested_scope": "read_state",
+      "expected": "valid"
+    },
+    {
+      "name": "foreign-signer-token",
+      "signed_token": {
+        "phip_capability": "1.0",
+        "token_id": "00000000-0000-4000-a000-000000000009",
+        "granted_by": "phip://acme.example/keys/test-key-alice",
+        "granted_to": "phip://acme.example/keys/test-key-alice",
+        "scope": "push_events",
+        "object_filter": "phip://acme.example/parts/*",
+        "not_before": "2026-01-15T00:00:00Z",
+        "expires": "2026-12-31T23:59:59Z",
+        "signature": {
+          "algorithm": "Ed25519",
+          "key_id": "phip://other.example/keys/test-key-bob",
+          "value": "UQwLi0Ipkt9YfelXUfGT-z0ng33mHdB542BtAx9a19WXObkMmMeVBsiXas2AlYMgImEUj5oO_Iso8j28_jstBg"
+        }
+      },
+      "transport_b64url": "eyJwaGlwX2NhcGFiaWxpdHkiOiIxLjAiLCJ0b2tlbl9pZCI6IjAwMDAwMDAwLTAwMDAtNDAwMC1hMDAwLTAwMDAwMDAwMDAwOSIsImdyYW50ZWRfYnkiOiJwaGlwOi8vYWNtZS5leGFtcGxlL2tleXMvdGVzdC1rZXktYWxpY2UiLCJncmFudGVkX3RvIjoicGhpcDovL2FjbWUuZXhhbXBsZS9rZXlzL3Rlc3Qta2V5LWFsaWNlIiwic2NvcGUiOiJwdXNoX2V2ZW50cyIsIm9iamVjdF9maWx0ZXIiOiJwaGlwOi8vYWNtZS5leGFtcGxlL3BhcnRzLyoiLCJub3RfYmVmb3JlIjoiMjAyNi0wMS0xNVQwMDowMDowMFoiLCJleHBpcmVzIjoiMjAyNi0xMi0zMVQyMzo1OTo1OVoiLCJzaWduYXR1cmUiOnsiYWxnb3JpdGhtIjoiRWQyNTUxOSIsImtleV9pZCI6InBoaXA6Ly9vdGhlci5leGFtcGxlL2tleXMvdGVzdC1rZXktYm9iIiwidmFsdWUiOiJVUXdMaTBJcGt0OVlmZWxYVWZHVC16MG5nMzNtSGRCNTQyQnRBeDlhMTlXWE9ia01tTWVWQnNpWGFzMkFsWU1nSW1FVWo1b09fSXNvOGoyOF9qc3RCZyJ9fQ",
+      "verifying_key_id": "test-key-bob",
+      "verification_time": "2026-06-01T00:00:00Z",
+      "expected": "valid",
+      "notes": "Intra-authority resolvers without federation MUST reject as INVALID_CAPABILITY. Federated resolvers fetch test-key-bob's actor and verify; result is valid."
+    }
+  ]
+}

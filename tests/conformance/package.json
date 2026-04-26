@@ -1,0 +1,38 @@
+{
+  "name": "@phip/conformance",
+  "version": "0.1.0-draft",
+  "description": "PhIP HTTP conformance suite. Black-box tests any PhIP server's /.well-known/phip/* endpoints against the wire contract from spec sections 4, 10, 11, 12. Install globally and run against any resolver: phip-conformance http://my-server.example --authority my-authority.example",
+  "main": "run.js",
+  "bin": {
+    "phip-conformance": "run.js"
+  },
+  "files": [
+    "run.js",
+    "README.md"
+  ],
+  "scripts": {
+    "start": "node run.js"
+  },
+  "dependencies": {
+    "canonicalize": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "phip",
+    "conformance",
+    "test-suite",
+    "federation"
+  ],
+  "homepage": "https://github.com/mfgs-us/phip/tree/main/tests/conformance",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mfgs-us/phip.git",
+    "directory": "tests/conformance"
+  },
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  }
+}

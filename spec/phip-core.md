@@ -309,7 +309,8 @@ clients SHOULD follow these constraints to maximize reuse:
 **Signed bundle distribution.** When a connected reference machine 
 needs to distribute records to a wholly disconnected site, the 
 authoritative wire format is a **PhIP bundle**: a signed archive 
-of one or more objects' states and histories. Bundle format:
+of one or more objects' states and histories. The manifest shape is
+defined by `schemas/bundle-manifest.json`. Bundle format:
 
 ```
 phip-bundle.tar
@@ -619,6 +620,9 @@ itself. Its history records key rotations, namespace registrations,
 and any transfer events. The authority record's `created` event MUST 
 be signed by the root key (a self-signed bootstrap, per Section 
 11.2.4 conventions adapted for the authority record).
+
+The payload shape is defined by `schemas/authority-transfer-payload.json`
+alongside the prose below.
 
 An `authority_transfer` event payload:
 
@@ -1864,6 +1868,9 @@ a capability token issued by the namespace authority.
 
 #### 11.3.1 Token Format
 
+The token shape is defined by `schemas/capability-token.json` 
+(machine-readable JSON Schema) alongside the prose below.
+
 ```json
 {
   "phip_capability": "1.0",
@@ -2209,6 +2216,136 @@ provenance claims that are intended to be verifiable by any party.
 Authorities that hold commercially sensitive data MUST attach 
 `phip:access` explicitly — silence is consent.
 
+### 11.6 Caller Authentication
+
+Capability tokens (Section 11.3) declare *what* an actor is permitted 
+to do. To enforce them under a `policy: capability` access mode 
+(Section 11.5.1), the resolver also needs to know *who is making the 
+request* — independently of the bearer-style token they present. 
+Without a separate caller identity, the §11.5.2 step-7 check 
+(`granted_to` matches the requesting actor) is structurally present 
+but tautological.
+
+PhIP defines two interoperable mechanisms for caller authentication. 
+Resolvers that enforce `policy: capability` MUST implement at least 
+one. Resolvers MAY accept both and let operators choose.
+
+#### 11.6.1 Mutual TLS
+
+The simplest mechanism: the resolver requires the client to present 
+an X.509 certificate during the TLS handshake. The certificate is 
+signed by a CA the resolver trusts. The certificate's identity field 
+maps to a PhIP actor URI as follows:
+
+1. The resolver looks for a Subject Alternative Name (SAN) of type 
+   `URI` whose value is a PhIP URI (`phip://...`). If present and 
+   valid, that URI is the caller's actor.
+2. Otherwise, the resolver maps the certificate's Subject Common Name 
+   (CN) to a PhIP actor URI via an operator-configured policy 
+   (typically `cn → phip://{authority}/actors/{cn}`). This fallback 
+   exists for compatibility with PKI deployments that don't issue 
+   PhIP-aware certificates.
+
+The resolver MUST then perform the §11.5.2 step-7 check: the 
+identified actor MUST equal the token's `granted_to`.
+
+mTLS is operationally heavy (cert provisioning, rotation, revocation 
+via CRL/OCSP) but battle-tested. It is the recommended mechanism for 
+production deployments that already operate a PKI.
+
+#### 11.6.2 Signed Requests
+
+For deployments that prefer not to operate mTLS (browser-originated 
+calls, edge runtimes, mobile clients), the resolver MAY accept signed 
+HTTP requests per RFC 9421 (HTTP Message Signatures). The caller 
+signs the request with their PhIP actor key; the resolver verifies 
+the signature against that actor's `phip:keys` material.
+
+A PhIP signed request MUST satisfy the following profile:
+
+1. **Algorithm.** `Ed25519` (RFC 9421 §3.3.6).
+2. **Covered components.** The signature MUST cover, in this order:
+   - `@method`
+   - `@target-uri`
+   - `content-digest` (RFC 9530 SHA-256 digest of the request body, 
+     omitted only when the body is empty)
+   - `phip-actor` (the new request header defined below)
+   - `created` (signature parameter — the Unix timestamp at which the 
+     signature was created)
+3. **Header: `PhIP-Actor`.** A new request header carrying the PhIP 
+   URI of the signing actor. The `keyid` parameter on the signature 
+   input MUST be a PhIP URI identifying the signing key actor 
+   (`keyid` and `PhIP-Actor` MAY be different — `keyid` is the key 
+   actor, `PhIP-Actor` is the requesting actor; the relationship is 
+   established by the requesting actor's `phip:keys` attribute or by 
+   the requesting actor delegating signing to the key actor).
+4. **Signature freshness.** The `created` parameter MUST be within 
+   ±300 seconds of the resolver's current time. Older requests MUST 
+   be rejected to mitigate replay.
+5. **Replay window.** Resolvers SHOULD maintain a short-lived cache 
+   (≥ 600 seconds) of seen signature values keyed by `keyid` and 
+   `created` to reject exact replays.
+
+Example (RFC 9421 illustrative format):
+
+```
+POST /.well-known/phip/push/parts/widget-001 HTTP/1.1
+Host: acme.example
+Content-Type: application/json
+Content-Digest: sha-256=:X48E9qOokqqrvdts8nOJRJN3OWDUoyWxBf7kbu9DBPE=:
+PhIP-Actor: phip://acme.example/actors/operator-jane
+Signature-Input: phip=("@method" "@target-uri" "content-digest" "phip-actor");\
+                 keyid="phip://acme.example/keys/jane-laptop-2026";\
+                 created=1735689600
+Signature: phip=:wqcAqbmYJ2ji2glfAMaRy4gruYYnx2nEFN2HN6jrnDnQCK1u02Gb04v9EDgwUPiu4A0w6vuQv5lIp5WPpBKSrw==:
+```
+
+The resolver verifies by:
+1. Resolving `keyid` to a key actor (locally or via federation).
+2. Confirming the key actor is `active` and the request's `created` 
+   timestamp falls within its validity window.
+3. Reconstructing the signature base per RFC 9421 from the listed 
+   covered components.
+4. Verifying the Ed25519 signature against the resolved key.
+5. Mapping `PhIP-Actor` to the requesting-actor identity for the 
+   §11.5.2 step-7 check. The resolver MUST verify that the signing 
+   key (`keyid`) is authorized to act for `PhIP-Actor` — typically 
+   by checking that `PhIP-Actor`'s `phip:keys` attribute references 
+   the same key, or that the key actor's history records a 
+   `delegated_signing_for` relation pointing at `PhIP-Actor` (an 
+   informal pattern; v0.1 leaves the binding mechanism to operator 
+   policy).
+
+If any step fails, the resolver MUST reject with `INVALID_SIGNATURE` 
+(401) for cryptographic failures or `MISSING_CAPABILITY` (403) for 
+absent signature headers on a `policy: capability` object.
+
+#### 11.6.3 Header Co-existence
+
+Both mechanisms MAY appear on the same request:
+
+- mTLS provides transport-level identity (the connection is from 
+  this client cert).
+- `PhIP-Capability` provides the authorization grant (this client is 
+  permitted to do X).
+- `Signature` (RFC 9421) provides application-level identity — 
+  optional when mTLS is used, required when mTLS is not.
+
+When both mTLS and signed-request are presented, the resolver MUST 
+verify that the identities agree. Disagreement MUST be treated as 
+`INVALID_SIGNATURE` (401).
+
+#### 11.6.4 Bearer Tokens Are Insufficient
+
+A capability token alone is a bearer secret: anyone who steals the 
+token impersonates the grantee. Section 11.6 exists because PhIP's 
+trust model requires the resolver to bind the token to the actual 
+requesting party, not just accept the token at face value. 
+Resolvers serving `policy: capability` objects MUST NOT skip caller 
+authentication on the grounds that the token "looks valid" — the 
+bearer-only path is reserved for `policy: authenticated`, where any 
+holder of any read scope is admitted.
+
 ---
 
 ## 12. Protocol Operations
@@ -2338,6 +2475,37 @@ This is not a separate protocol operation — it is a sub-resource of GET,
 providing paginated access to the same history that the object model 
 references.
 
+#### 12.2.2 Cursor Stability
+
+Cursors are opaque from the client's perspective: the resolver decides 
+the encoding. Stability guarantees:
+
+- **Within an object's lifetime**, a cursor returned by the resolver 
+  MUST remain valid as long as the object exists. New events appended 
+  after the cursor was issued are returned by subsequent paginated 
+  requests; previously-returned events are NOT re-returned.
+- **Across resolver restarts**, cursors MUST remain valid. Cursors 
+  encode position in the chain (e.g., a hash, an index, a timestamp); 
+  they MUST NOT depend on in-memory state lost on restart.
+- **Across resolver replicas**, cursors MUST be portable. A cursor 
+  issued by one replica of a resolver MUST be valid against any other 
+  replica serving the same authority. This rules out memory-only 
+  sequence counters as cursor encodings.
+- **Across authority transfers** (§4.6), cursors MUST remain valid 
+  against the successor for objects whose namespace was transferred, 
+  provided the successor serves the full pre-transfer history.
+
+A resolver that cannot honor a cursor (e.g., because it was issued 
+against a snapshot the resolver no longer holds) MUST return 
+`INVALID_QUERY` (422) with a `details.reason` of `cursor_expired` or 
+`cursor_unrecognized`. Clients receiving this MUST re-request from 
+the beginning rather than retrying with the same cursor.
+
+Resolvers SHOULD NOT encode authority-private state in cursors. A 
+cursor of the form `sha256:<hash-of-last-returned-event>` is a 
+recommended pattern: stable across restart, portable across replicas, 
+and verifiable client-side.
+
 ### 12.3 PUSH
 
 Append an event to an object's history.
@@ -2393,6 +2561,52 @@ pushes. The linear hash chain is the authoritative ordering.
 Resolvers SHOULD process pushes to the same object serially to minimize 
 conflict frequency. The spec does not define a maximum retry count or 
 backoff strategy — these are client implementation concerns.
+
+#### 12.3.2 General Retry Guidance
+
+Beyond `CHAIN_CONFLICT`, clients face transient transport-layer 
+failures (network errors, 5xx responses, connection resets). To 
+prevent every PhIP client library from inventing its own retry 
+policy, the spec gives the following normative guidance:
+
+**By HTTP status:**
+
+| Status range | Retry semantics |
+|---|---|
+| `2xx` | Don't retry — operation succeeded |
+| `3xx` | Don't retry as PhIP — follow the redirect per §4.3.3 / §4.5.2 / §4.6.4 |
+| `400` | Don't retry — client error; retry will fail identically |
+| `401`, `403` | Don't retry without remediation — auth/cap error; the client must obtain a valid token or actor identity first |
+| `404` | Don't retry — object doesn't exist |
+| `408`, `429` | Retry — honor `Retry-After` if present, else exponential backoff |
+| `409` | Retry only if the underlying error code is recoverable: `CHAIN_CONFLICT` per §12.3.1; `OBJECT_EXISTS` and `DUPLICATE_EVENT` are NOT recoverable |
+| `4xx` (other) | Don't retry — client error |
+| `5xx` | Retry with exponential backoff |
+| Network error (no response) | Retry with exponential backoff for idempotent methods (GET, HEAD); for POST, retry only when the resolver explicitly advertises idempotency via response headers, or when the client knows the request was idempotent (e.g., `event_id` deduplication on PUSH) |
+
+**Backoff:** Clients SHOULD use exponential backoff with jitter. A 
+recommended default: base 1 second, multiplier 2.0, jitter ±50%, 
+maximum 30 seconds, maximum 5 attempts. Resolvers MAY advertise 
+preferred backoff parameters via `/meta` in a future revision.
+
+**Idempotency on POST.** PhIP events carry a unique `event_id`. A 
+resolver receiving a duplicate `event_id` MUST return 
+`DUPLICATE_EVENT` (409) without applying it twice. This makes PUSH 
+safe to retry on transport failures: if the original request 
+succeeded but the response was lost, the retry sees `DUPLICATE_EVENT` 
+and the client knows the operation completed. Clients MAY treat 
+`DUPLICATE_EVENT` as success when retrying after a transport failure.
+
+CREATE is similarly idempotent on `event_id` (the genesis event's 
+id is unique per object), but the natural error on retry is 
+`OBJECT_EXISTS` rather than `DUPLICATE_EVENT` because the resolver 
+sees the prior CREATE succeeded.
+
+**Don't retry forever.** Clients SHOULD enforce a maximum total wall 
+time per logical operation (recommended: 30 seconds for interactive 
+calls, 5 minutes for batch ingestion). Retries that exceed this 
+budget MUST surface the underlying error to the caller rather than 
+masking it as a hang.
 
 ### 12.4 QUERY
 
@@ -2677,6 +2891,9 @@ Error responses MUST NOT be signed. They are informational, not
 historical records. HTTPS is the integrity mechanism for error responses.
 
 ### 12.7 Metadata Document
+
+The document shape is defined by `schemas/meta.json` (machine-readable
+JSON Schema) alongside the prose below.
 
 An authority MAY publish a metadata document describing its resolver's
 capabilities:

@@ -1,21 +1,34 @@
-# PhIP HTTP Conformance Suite
+# @phip/conformance
 
 A black-box test suite for PhIP servers. Any implementation that passes this
 suite against an empty namespace is wire-compatible with the reference
-resolver for the v0.1 scope: CREATE, GET, PUSH, QUERY, `/history/`, and
+resolver for the v0.1 scope: CREATE, GET, PUSH, QUERY, `/history/`, batch
+operations, `/meta`, `phip:access` enforcement, capability tokens, and
 error envelopes.
+
+## Install
+
+```
+npm install -g @phip/conformance
+```
+
+Or run directly from a clone of the [phip repo](https://github.com/mfgs-us/phip):
+
+```
+node tests/conformance/run.js <base-url>
+```
 
 ## Usage
 
 ```
-node conformance/run.js <base-url> [--namespace <ns>] [--authority <auth>]
+phip-conformance <base-url> [--namespace <ns>] [--authority <auth>]
 ```
 
 Example against a local reference server bound to `acme.example`:
 
 ```
 PHIP_AUTHORITY=acme.example PHIP_PORT=8080 node reference/src/index.js &
-node conformance/run.js http://127.0.0.1:8080 --authority acme.example
+phip-conformance http://127.0.0.1:8080 --authority acme.example
 ```
 
 * `<base-url>` — where the server is reachable over HTTP(S).

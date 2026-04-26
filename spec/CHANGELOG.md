@@ -5,6 +5,44 @@ All notable changes to the PhIP specification will be documented in this file.
 ## [0.1.0-draft] — 2026-04-09
 
 ### Added
+- Library prerequisites: four new JSON Schemas (`schemas/capability-token.json`,
+  `schemas/meta.json`, `schemas/authority-transfer-payload.json`,
+  `schemas/bundle-manifest.json`) so client libs validate structurally
+  without each one reinventing validation; pointers added from §11.3.1,
+  §12.7, §4.6.2, and §4.3.4 to the corresponding schemas.
+- Capability token test vectors (`tests/vectors/token/`) covering 9
+  cases: valid push and read tokens, expired, not-yet-valid,
+  object_filter mismatch, forged signature, post-signing tamper,
+  read-history-covers-read-state, and foreign-signer.
+- Bundle test vectors (`tests/vectors/bundle/`) covering 3 cases:
+  one-object snapshot, multi-object snapshot, and tampered-event
+  rejection. Self-check verifies manifest signatures, full chain
+  walks, and embedded key actor presence.
+- New §11.6 Caller Authentication: defines mTLS (§11.6.1) and signed
+  HTTP requests per RFC 9421 (§11.6.2) as the two interoperable
+  mechanisms for binding a capability token to its actual requester.
+  Closes the bearer-token gap that made §11.5.2 step-7 tautological.
+- New §12.2.2 Cursor Stability: cursors MUST survive resolver restart
+  and replica swap, MUST be portable across authority transfers,
+  cursor-expired surfaces as `INVALID_QUERY` with `details.reason`.
+- New §12.3.2 General Retry Guidance: per-status retry semantics,
+  exponential-backoff defaults, idempotency-on-`event_id` guarantee
+  for safe POST retries.
+- `VERSIONING.md`: spec MAJOR/MINOR/PATCH rules, library-tracks-spec
+  pinning, schema-version independence, compatibility window.
+- `CONTRIBUTING.md`: PR checklist, scope rules, reference-vs-server
+  boundary, spec change process.
+- `IMPLEMENTATIONS.md`: registry of known PhIP implementations with
+  conformance status.
+- `@phip/conformance` package: `tests/conformance/` is now a
+  publishable npm package with a `phip-conformance` bin. Operators
+  install with `npm install -g @phip/conformance` and probe any
+  resolver from one command. Self-contained (test keypair embedded;
+  no dependency on the wider repo).
+- Conformance §20 federation mechanics (opt-in): when the resolver's
+  `/meta` advertises `delegations` or `successor`, the suite probes
+  the redirect machinery (`Location`, `PhIP-Delegation`,
+  `PhIP-Transfer-Event` headers).
 - Interop prerequisites for multi-language client libraries (`phip-js`, 
   `phip-py`, etc.): language-agnostic test vectors in `tests/vectors/` 
   covering JCS canonicalization, SHA-256 event hashing, Ed25519 signing 
