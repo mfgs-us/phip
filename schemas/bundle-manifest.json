@@ -69,8 +69,8 @@
         },
         "value": {
           "type": "string",
-          "pattern": "^(base64url:)?[A-Za-z0-9_-]+$",
-          "description": "Base64url-encoded 64-byte Ed25519 signature over the JCS canonicalization of the manifest with the signature field removed."
+          "pattern": "^(base64url:)?[A-Za-z0-9_-]{86}$",
+          "description": "Base64url-encoded 64-byte Ed25519 signature (exactly 86 base64url characters, no padding) over the JCS canonicalization of the manifest with the signature field removed."
         }
       }
     }

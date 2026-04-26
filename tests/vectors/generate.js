@@ -698,6 +698,7 @@ const tokenCases = [];
     verifying_key_id: "test-key-alice",
     verification_time: "2026-06-01T00:00:00Z",
     expected: "invalid_signature",
+    notes: "The signed_token JSON shown is the post-mutation form (scope='push_events'). The signature was computed over the pre-mutation form (scope='read_state'); verifying against the displayed content fails by design.",
   });
 }
 

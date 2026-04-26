@@ -30,7 +30,21 @@ const canonicalize = require("canonicalize");
 // MUST be overridable because PhIP authorities are names, not network
 // addresses — a server bound to authority "acme.example" can be reached at
 // http://localhost:8080 during testing.
+function printUsage() {
+  console.error(
+    "usage: phip-conformance <base-url> [--namespace <ns>] [--authority <auth>]\n" +
+    "\n" +
+    "  <base-url>     URL where the resolver is reachable (e.g. https://acme.example).\n" +
+    "  --namespace    Namespace to create test objects under. Default: 'conformance'.\n" +
+    "  --authority    PhIP authority name the resolver claims to be. Defaults to the\n" +
+    "                 URL hostname; override when network address ≠ authority name."
+  );
+}
 const raw = process.argv.slice(2);
+if (raw.length === 0 || raw.includes("--help") || raw.includes("-h")) {
+  printUsage();
+  process.exit(raw.length === 0 ? 2 : 0);
+}
 let BASE_URL = null;
 let NAMESPACE = "conformance";
 let AUTHORITY_OVERRIDE = null;
@@ -42,9 +56,7 @@ for (let i = 0; i < raw.length; i++) {
   else NAMESPACE = a;
 }
 if (!BASE_URL) {
-  console.error(
-    "usage: node conformance/run.js <base-url> [--namespace <ns>] [--authority <auth>]"
-  );
+  printUsage();
   process.exit(2);
 }
 

@@ -17,12 +17,12 @@
     "expires",
     "signature"
   ],
-  "additionalProperties": false,
+  "additionalProperties": true,
   "properties": {
     "phip_capability": {
       "type": "string",
       "const": "1.0",
-      "description": "Token format version. MUST be '1.0' for this revision of the spec."
+      "description": "Token format version. MUST be '1.0' for this revision of the spec. Future spec MINOR bumps may add optional fields without changing this value; v1.0 validators MUST tolerate unknown fields (additionalProperties: true)."
     },
     "token_id": {
       "type": "string",
@@ -31,7 +31,7 @@
     },
     "granted_by": {
       "$ref": "#/$defs/phipUri",
-      "description": "PhIP URI of the actor who issued the token. MUST resolve to an `actor` object in the granting authority's namespace."
+      "description": "PhIP URI of the actor who issued the token. MUST resolve to an `actor` object in the granting authority's namespace. Per §11.2, key resources are themselves actors, so a key URI like `phip://acme.example/keys/ops-2026` is a valid grantor."
     },
     "granted_to": {
       "$ref": "#/$defs/phipUri",
@@ -91,8 +91,8 @@
         },
         "value": {
           "type": "string",
-          "pattern": "^(base64url:)?[A-Za-z0-9_-]+$",
-          "description": "Base64url-encoded 64-byte Ed25519 signature. The optional `base64url:` prefix is permitted for compatibility with spec examples."
+          "pattern": "^(base64url:)?[A-Za-z0-9_-]{86}$",
+          "description": "Base64url-encoded 64-byte Ed25519 signature (exactly 86 base64url characters, no padding). The optional `base64url:` prefix is permitted for compatibility with spec examples."
         }
       }
     }

@@ -334,6 +334,7 @@ The `manifest.json` MUST contain:
 | `created_by` | MUST | PhIP URI of the actor producing the bundle |
 | `authority` | MUST | Source authority name |
 | `objects` | MUST | Array of bundled `phip_id`s with `history_head` per object — bundle-level integrity manifest |
+| `snapshot_of` | MAY | ISO 8601 timestamp this bundle represents the source authority's state as of. Used by mirror snapshots (§4.6.5) to declare currency; ad-hoc exports omit it |
 | `signature` | MUST | Ed25519 signature over the JCS canonicalization of the manifest minus this field, signed by `created_by` |
 
 A consumer importing a bundle MUST:
@@ -2264,26 +2265,32 @@ the signature against that actor's `phip:keys` material.
 A PhIP signed request MUST satisfy the following profile:
 
 1. **Algorithm.** `Ed25519` (RFC 9421 §3.3.6).
-2. **Covered components.** The signature MUST cover, in this order:
-   - `@method`
-   - `@target-uri`
-   - `content-digest` (RFC 9530 SHA-256 digest of the request body, 
-     omitted only when the body is empty)
-   - `phip-actor` (the new request header defined below)
-   - `created` (signature parameter — the Unix timestamp at which the 
-     signature was created)
-3. **Header: `PhIP-Actor`.** A new request header carrying the PhIP 
-   URI of the signing actor. The `keyid` parameter on the signature 
-   input MUST be a PhIP URI identifying the signing key actor 
-   (`keyid` and `PhIP-Actor` MAY be different — `keyid` is the key 
-   actor, `PhIP-Actor` is the requesting actor; the relationship is 
-   established by the requesting actor's `phip:keys` attribute or by 
-   the requesting actor delegating signing to the key actor).
-4. **Signature freshness.** The `created` parameter MUST be within 
-   ±300 seconds of the resolver's current time. Older requests MUST 
-   be rejected to mitigate replay.
-5. **Replay window.** Resolvers SHOULD maintain a short-lived cache 
-   (≥ 600 seconds) of seen signature values keyed by `keyid` and 
+2. **Covered components.** Per RFC 9421 §2, "covered components" are
+   the named items listed in the `Signature-Input` parentheses. The
+   signature MUST cover the following four components, in this order:
+   - `@method` (RFC 9421 derived component)
+   - `@target-uri` (derived component)
+   - `content-digest` (header, RFC 9530 SHA-256 digest of the request
+     body; the header MAY be omitted only when the body is empty, in
+     which case `content-digest` is also omitted from the covered set)
+   - `phip-actor` (header — defined in 3 below)
+3. **Required signature parameters.** The `Signature-Input` value
+   MUST also carry these RFC 9421 §2.3 parameters:
+   - `keyid` — a PhIP URI identifying the signing key actor
+   - `created` — the Unix timestamp at which the signature was
+     produced; used for the freshness check in 5 below
+   The `alg` parameter is OPTIONAL; when present it MUST be `"ed25519"`.
+4. **Header: `PhIP-Actor`.** A new request header carrying the PhIP
+   URI of the signing actor. `keyid` and `PhIP-Actor` MAY be different
+   — `keyid` is the key actor, `PhIP-Actor` is the requesting actor;
+   the relationship is established by the requesting actor's
+   `phip:keys` attribute or by the requesting actor delegating signing
+   to the key actor.
+5. **Signature freshness.** The `created` parameter MUST be within
+   ±300 seconds of the resolver's current time. Older or future-dated
+   requests MUST be rejected to mitigate replay.
+6. **Replay window.** Resolvers SHOULD maintain a short-lived cache
+   (≥ 600 seconds) of seen signature values keyed by `keyid` and
    `created` to reject exact replays.
 
 Example (RFC 9421 illustrative format):
@@ -2559,8 +2566,10 @@ The resolver MUST NOT reorder, merge, or silently resolve concurrent
 pushes. The linear hash chain is the authoritative ordering.
 
 Resolvers SHOULD process pushes to the same object serially to minimize 
-conflict frequency. The spec does not define a maximum retry count or 
-backoff strategy — these are client implementation concerns.
+conflict frequency. Maximum retry count and backoff strategy for 
+`CHAIN_CONFLICT` recovery are client concerns; see §12.3.2 for general 
+guidance that applies to retry behavior across all status codes, 
+including the recommended exponential-backoff defaults.
 
 #### 12.3.2 General Retry Guidance
 
@@ -2884,7 +2893,7 @@ structure is not normative.
 | `INVALID_TRACK` | 422 | State is not valid for this object type's lifecycle track |
 | `INVALID_RELATION` | 422 | Relation type constraint violated (e.g., `located_at` target is not a `location` or `vehicle`) |
 | `DANGLING_RELATION` | 422 | A same-authority relation references a `phip_id` that does not exist (Section 7.4) |
-| `INVALID_QUERY` | 422 | Query predicate is malformed or uses unsupported features |
+| `INVALID_QUERY` | 422 | Query predicate is malformed or uses unsupported features. For history pagination, `details.reason` MAY be `cursor_expired` (resolver no longer holds the cursor's anchor point) or `cursor_unrecognized` (cursor not issued by this resolver). See §12.2.2 |
 | `OPERATION_NOT_SUPPORTED` | 405 | Resolver does not implement the requested operation under its declared conformance class (Section 13). Examples: writes against a Read-Only or Mirror resolver, QUERY against a Mirror resolver |
 
 Error responses MUST NOT be signed. They are informational, not 
@@ -2911,13 +2920,16 @@ fields:
 | `authority` | string | MUST | The authority name this resolver serves |
 | `namespaces` | array of strings | MUST | Namespaces this resolver will accept CREATEs into |
 | `schema_namespaces` | array of strings | SHOULD | Attribute namespaces whose schemas this resolver validates (e.g. `phip:mechanical`, `phip:software`) |
-| `supported_operations` | array of strings | SHOULD | Subset of `["create", "get", "push", "query", "history"]` |
+| `supported_operations` | array of strings | SHOULD | Subset of `["create", "get", "push", "query", "history", "batch_create", "batch_push"]` |
 | `query_capabilities` | object | MAY | Optional map describing supported filter operators, glob syntax, sort orders |
 | `root_key` | string | SHOULD | PhIP URI of this authority's root key (Section 4.6.1). Clients use this to anchor trust for transfer verification |
 | `mirror_urls` | array of strings | MAY | URLs of read-only mirrors hosting frozen snapshots of this authority's records. See Section 4.6.5 |
 | `successor` | object | MAY | Present iff this authority has been transferred. Object: `{ "authority": "newco.example", "transfer_event_id": "...", "effective_from": "..." }`. Clients SHOULD redirect subsequent requests to the successor |
 | `delegations` | array of objects | MAY | Active sub-namespace delegations. See Section 4.5.1 for entry shape |
 | `conformance_class` | string | SHOULD | One of `full`, `read-only`, `mirror`, `client-only` (Section 13). Absence implies `full` for compatibility with v0.1 resolvers |
+| `batch_max_events` | integer | MAY | Advisory upper bound on events per batch CREATE/PUSH (cap is 1000 per §12.5; resolvers MAY enforce lower) |
+| `mtls_required` | boolean | MAY | If `true`, clients MUST present a TLS client cert (Section 12.8.1) |
+| `mtls_ca_bundle_url` | string | MAY | URL where the resolver publishes its CA bundle for client cert issuance (Section 12.8.1) |
 
 A resolver that does not publish `/meta` is still conformant. Clients
 that need a feature not advertised in `/meta` SHOULD attempt the

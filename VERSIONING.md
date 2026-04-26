@@ -94,7 +94,11 @@ both v0.1 and v0.2 resolvers). Across MAJOR boundaries (e.g.,
 v0.x ↔ v1.x), libraries pick a side and document which.
 
 Operators following spec §8.4.6 must support N-1 MAJOR for at least
-12 months. Libraries SHOULD aim for the same window where practical.
+12 months. Libraries MUST document their actual support window in
+their README; SHOULD aim for the same 12-month N-1 window where
+maintainer resources allow. A single-author library that can only
+target the current MAJOR is acceptable as long as the README is
+explicit — adopters can plan around it.
 
 ## Schema namespace versioning vs. spec versioning
 

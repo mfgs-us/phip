@@ -77,17 +77,19 @@ PRs that change normative spec text SHOULD include:
 ## Scope rules
 
 This repo is intentionally minimal. The following are out of scope here
-and should be raised in the appropriate sibling repo:
+and should be raised in the appropriate sibling repo (note: most sibling
+repos are planned but not yet created; until they exist, file the issue
+on this repo with the prefix `[future-repo]:` and we'll triage):
 
-| Concern | Repo |
-|---|---|
-| Client library bugs / features | `phip-js`, `phip-py`, `phip-rs` etc. |
-| Production server features | `phip-server` |
-| Operator CLI features | `phip-cli` |
-| Vertical examples | `phip-datacenter`, etc. |
-| Persistence backends | `phip-server` |
-| HSM / KMS integration | `phip-cli` |
-| TLS / mTLS termination | `phip-server` |
+| Concern | Repo | Status |
+|---|---|---|
+| Client library bugs / features | `phip-js`, `phip-py`, `phip-rs` etc. | planned |
+| Production server features | `phip-server` | planned |
+| Operator CLI features | `phip-cli` | planned |
+| Vertical examples | `phip-datacenter`, etc. | planned |
+| Persistence backends | `phip-server` | planned |
+| HSM / KMS integration | `phip-cli` | planned |
+| TLS / mTLS termination | `phip-server` | planned |
 
 ## The reference resolver is not the production server
 
