@@ -139,6 +139,5 @@ from sharp critique; humans don't.
 
 ## Questions
 
-For questions that aren't quite issues yet:
-- GitHub Discussions on this repo
-- Email the maintainers (see README)
+For questions that aren't quite issues yet, open a GitHub Discussion
+on this repo.
