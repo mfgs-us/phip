@@ -34,7 +34,6 @@ phip/
 │   ├── mechanical.json
 │   ├── datacenter.json
 │   └── software.json
-├── reference/             # Minimal reference resolver implementation
 ├── tests/                 # Conformance test suite
 ├── README.md
 ├── LICENSE                # Apache 2.0
@@ -43,9 +42,10 @@ phip/
 
 ## Ecosystem (Separate Repos)
 
-- **phip-js** — client library (URI resolution, event signing, hash chain verification)
-- **phip-server** — production-ready PhIP server implementation
-- **phip-datacenter** — vertical example application for datacenter ops
+- **phip-py** — Python client library (URI resolution, event signing, hash-chain verification, federation client)
+- **phip-server** — Reference + production server (Python/FastAPI, Postgres or SQLite, Docker Compose). Supersedes the earlier Node reference that used to live in `reference/`.
+- **phip-bench** — Personal bench-measurement log built on PhIP (single-user wedge tool)
+- **phip-datacenter** — Vertical example application for datacenter ops (planned)
 
 ## Development Priorities
 

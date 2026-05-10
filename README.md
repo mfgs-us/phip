@@ -22,7 +22,7 @@ communication bus, or blockchain.
 | [**schemas/**](./schemas/) | JSON Schemas: core object, attribute namespaces, capability tokens, /meta, bundle manifest |
 | [**tests/conformance/**](./tests/conformance/) | Black-box HTTP conformance suite — `npm install -g @phip/conformance` |
 | [**tests/vectors/**](./tests/vectors/) | Language-agnostic test fixtures: JCS, Ed25519, hash chains, lifecycle, tokens, bundles |
-| [**reference/**](./reference/) | Minimal Node reference resolver (pedagogical; not a production server) |
+| [**phip-server**](https://github.com/mfgs-us/phip-server) | Reference server implementation (Python + FastAPI, Docker Compose for one-command spinup) — runs the protocol end-to-end |
 | [**IMPLEMENTATIONS.md**](./IMPLEMENTATIONS.md) | Registry of known implementations and conformance status |
 | [**CONTRIBUTING.md**](./CONTRIBUTING.md) | How to file issues and submit PRs |
 | [**VERSIONING.md**](./VERSIONING.md) | Spec, schema, and library versioning rules |
@@ -138,25 +138,29 @@ phip/
 ├── tests/
 │   ├── vectors/       # Language-agnostic fixtures
 │   └── conformance/   # HTTP conformance suite (also @phip/conformance)
-├── reference/         # Minimal Node reference resolver
 ├── README.md
 ├── CONTRIBUTING.md
 ├── VERSIONING.md
 ├── IMPLEMENTATIONS.md
+├── LIABILITY.md
 └── LICENSE
 ```
 
-The reference resolver in `reference/` is intentionally minimal — no
-persistence, no TLS, no HSM integration. It exists to validate the
-spec and serve as a working example for spec readers. Production
-deployments use `phip-server` (a separate repo, when it lands).
+The reference server lives in its own repo at
+[**mfgs-us/phip-server**](https://github.com/mfgs-us/phip-server)
+(Python + FastAPI + Postgres/SQLite, Docker Compose for one-command
+spinup). It runs the protocol end-to-end and is what implementers
+should check their work against. The earlier minimal Node reference
+was retired in favor of phip-server so the protocol primitives
+(canonicalization, signing, chain validation) have a single
+language-shared implementation via `phip-py`.
 
 ## Contributing
 
 See [**CONTRIBUTING.md**](./CONTRIBUTING.md). The PR checklist requires
 passing:
 
-- `cd reference && npm test` — reference smoke + federation
+- Reference-server smoke (run via [`phip-server`](https://github.com/mfgs-us/phip-server))
 - `cd tests && npm run self-check` — language-agnostic vectors (189
   assertions)
 - `cd tests/conformance && node run.js <url>` — HTTP conformance suite

@@ -17,27 +17,25 @@ libraries, see the CONTRIBUTING file in each lib's repo.
 | `schemas/` | JSON Schemas: core object, attribute namespaces, capability token, /meta document, bundle manifest, authority-transfer payload |
 | `tests/vectors/` | Language-agnostic fixtures — JCS canonicalization, Ed25519, hash chain, lifecycle, tokens, bundles |
 | `tests/conformance/` | HTTP black-box test suite for any PhIP server |
-| `reference/` | Minimal Node reference resolver — pedagogical and spec-validation only, NOT a production server |
+
+The reference server lives at [**mfgs-us/phip-server**](https://github.com/mfgs-us/phip-server).
 
 ## Quick start
 
 ```bash
-# Install reference + tests dependencies
-cd reference && npm install
-cd ../tests && npm install
-
-# Run reference's smoke + federation tests
-cd ../reference && npm test
+# Install conformance suite dependencies (this repo)
+cd tests && npm install
 
 # Validate the language-agnostic vectors
-cd ../tests && npm run self-check
+cd tests && npm run self-check
 
-# Run the HTTP conformance suite against a running reference
-cd ../reference && PHIP_AUTHORITY=test.local PHIP_PORT=8080 npm start &
+# Stand up the reference server and run the HTTP conformance suite
+git clone https://github.com/mfgs-us/phip-server
+cd phip-server && PHIP_AUTHORITY=test.local docker compose up -d
 cd ../tests && npm run conformance -- http://127.0.0.1:8080 --authority test.local
 ```
 
-All four commands MUST pass before you submit a PR.
+All three commands MUST pass before you submit a PR.
 
 ## Filing an issue
 
@@ -50,16 +48,17 @@ Before filing:
   input that triggered it.
 - For **conformance suite bugs**, include the resolver under test and
   the failing assertion's full output.
-- For **reference resolver bugs**, include `node --version`, the env
-  vars passed, and a minimal reproduction.
+- For **reference server bugs**, file them against
+  [mfgs-us/phip-server](https://github.com/mfgs-us/phip-server) with
+  the Python version, env vars passed, and a minimal reproduction.
 
 ## Pull request checklist
 
 Every PR MUST:
 
-- [ ] Pass `cd reference && npm test`
 - [ ] Pass `cd tests && npm run self-check`
-- [ ] Pass `cd tests && npm run conformance -- ...` against the reference
+- [ ] Pass `cd tests && npm run conformance -- ...` against
+      [phip-server](https://github.com/mfgs-us/phip-server)
 - [ ] Update `spec/CHANGELOG.md` if the change touches the spec
 - [ ] Update the `version` field in any modified schema (per `VERSIONING.md`)
 - [ ] Add or update a fixture in `tests/vectors/` if the change affects
@@ -91,22 +90,18 @@ on this repo with the prefix `[future-repo]:` and we'll triage):
 | HSM / KMS integration | `phip-cli` | planned |
 | TLS / mTLS termination | `phip-server` | planned |
 
-## The reference resolver is not the production server
+## The reference server lives in a separate repo
 
-`reference/` is intentionally small. It exists to:
+[mfgs-us/phip-server](https://github.com/mfgs-us/phip-server) is both
+the pedagogical and the production reference. It runs the spec
+end-to-end with persistent storage (SQLite or Postgres), filesystem
+or S3 blobs, and Docker Compose for one-command spinup. It reuses
+[phip-py](https://github.com/mfgs-us/phip-py) for protocol primitives
+(JCS canonicalization, Ed25519 signing, chain validation) so the
+spec logic has a single source of truth.
 
-1. Validate that the spec, as written, can be implemented
-2. Serve as the conformance suite's target during spec changes
-3. Give spec readers a working example they can read end-to-end
-
-It does NOT have:
-- Persistent storage (everything is in-memory)
-- TLS termination (operators front it with a TLS-terminating proxy)
-- Production observability
-- HSM/KMS integration
-
-Pull requests adding any of the above will be redirected to
-`phip-server`.
+The earlier minimal Node reference that lived in `reference/` was
+retired when phip-server landed.
 
 ## Spec change process
 
