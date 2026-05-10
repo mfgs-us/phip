@@ -23,6 +23,8 @@ communication bus, or blockchain.
 | [**tests/conformance/**](./tests/conformance/) | Black-box HTTP conformance suite — `npm install -g @phip/conformance` |
 | [**tests/vectors/**](./tests/vectors/) | Language-agnostic test fixtures: JCS, Ed25519, hash chains, lifecycle, tokens, bundles |
 | [**phip-server**](https://github.com/mfgs-us/phip-server) | Reference server implementation (Python + FastAPI, Docker Compose for one-command spinup) — runs the protocol end-to-end |
+| [**phip-cli**](https://github.com/mfgs-us/phip-cli) | `phip` command-line tool: identity + remote management, server integration, protocol plumbing |
+| [**phip-py**](https://github.com/mfgs-us/phip-py) | Python client library — URI resolution, event signing, chain verification, federation |
 | [**IMPLEMENTATIONS.md**](./IMPLEMENTATIONS.md) | Registry of known implementations and conformance status |
 | [**CONTRIBUTING.md**](./CONTRIBUTING.md) | How to file issues and submit PRs |
 | [**VERSIONING.md**](./VERSIONING.md) | Spec, schema, and library versioning rules |

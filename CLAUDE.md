@@ -44,7 +44,7 @@ phip/
 
 - **phip-py** — Python client library (URI resolution, event signing, hash-chain verification, federation client)
 - **phip-server** — Reference + production server (Python/FastAPI, Postgres or SQLite, Docker Compose). Supersedes the earlier Node reference that used to live in `reference/`.
-- **phip-bench** — Personal bench-measurement log built on PhIP (single-user wedge tool)
+- **phip-cli** — `phip` command-line tool: identity + remote management, server integration, protocol plumbing. Built on phip-py.
 - **phip-datacenter** — Vertical example application for datacenter ops (planned)
 
 ## Development Priorities
