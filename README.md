@@ -26,6 +26,7 @@ communication bus, or blockchain.
 | [**IMPLEMENTATIONS.md**](./IMPLEMENTATIONS.md) | Registry of known implementations and conformance status |
 | [**CONTRIBUTING.md**](./CONTRIBUTING.md) | How to file issues and submit PRs |
 | [**VERSIONING.md**](./VERSIONING.md) | Spec, schema, and library versioning rules |
+| [**LIABILITY.md**](./LIABILITY.md) | How PhIP claims relate to contracts, evidence, and statutory records |
 
 ## What problem PhIP solves
 
