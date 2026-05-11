@@ -17,6 +17,7 @@ communication bus, or blockchain.
 
 | Document | What it is |
 |---|---|
+| [**TUTORIAL.md**](./TUTORIAL.md) | 15-minute end-to-end tour: what PhIP is, the ecosystem, a working stack |
 | [**spec/phip-core.md**](./spec/phip-core.md) | The full normative specification |
 | [**spec/CHANGELOG.md**](./spec/CHANGELOG.md) | What changed in each revision |
 | [**schemas/**](./schemas/) | JSON Schemas: core object, attribute namespaces, capability tokens, /meta, bundle manifest |
