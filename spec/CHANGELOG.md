@@ -4,31 +4,60 @@ All notable changes to the PhIP specification will be documented in this file.
 
 ## [Unreleased]
 
-### Added
-- New §11.5.6 Topology Disclosure (optional): a middle ground between
-  `read_state` (current projection only) and `read_history` (full event
-  payloads). Resolvers MAY honor `?disclosure=topology` on GET history
-  to return event IDs, types, timestamps, and `previous_hash` links —
-  enough to attest that an object exists and has been modified along a
-  particular chain shape, without revealing payloads, actors, or
-  per-event signatures. The whole topology array is signed once by the
-  resolver's authority key.
-- New `read_topology` capability-token scope (§11.3.2,
-  `schemas/capability-token.json` bumped to 1.1).
-- §11.5.2 resolution order updated to route `read_topology` tokens
-  through topology mode.
-- Appendix A.2 entry A42 (Medium): selective history disclosure.
+### Added — A42 selective history disclosure
 
-Motivation: enables the "private design with publicly listed instances"
-composition pattern. An external party resolving a public `assembly`
-that `instance_of`s a private `design` can confirm the design exists
-and is under active stewardship without seeing its payloads, by
-presenting a `read_topology` token published alongside the authority
-record.
+- **New §11.5.6 Topology Disclosure (optional)** — a middle ground
+  between `read_state` (current projection only) and `read_history`
+  (full event payloads). Resolvers MAY honor `?disclosure=topology` on
+  GET history to return event IDs, types, timestamps, `previous_hash`
+  links, and `event_hash` per entry — enough to attest "this object
+  exists, has chain shape X, was last touched at T" and to verify
+  chain continuity from the response alone, without revealing
+  payloads, actors, or per-event signatures.
+- **New `read_topology` capability-token scope** (§11.3.2). Grants
+  ONLY topology disclosure mode — not GET state, default GET history,
+  QUERY, or any PUSH.
+- **`granted_to` accepts the literal string `"*"`** (§11.3.1) — a
+  presenter-anonymous grant that disables the §11.5.2 step-7 actor
+  match. Intended for low-leakage scopes (notably `read_topology`)
+  and SHOULD NOT be combined with `read_history`, `read_query`, or
+  push scopes.
+- **`/meta.disclosures`** array advertises which disclosure modes the
+  resolver supports (§12.7). Only `"topology"` is defined in v0.1.
+- **`schemas/topology-response.json`** defines the response document
+  (`phip_id`, `page_length`, `disclosure`, `topology`,
+  `topology_signature`, `next_cursor`).
+- **§11.5.2 resolution order** updated to route `read_topology`
+  tokens through topology mode and to treat `read_topology` without
+  `?disclosure=topology` as a scope mismatch (403). Step 7 skips the
+  `granted_to` actor match when `granted_to == "*"`.
+- **Appendix A.2 entry A42 (Medium)** — first post-v0.1 open item.
 
-Surfaced while implementing a read-only PhIP resolver in the
+### Changed
+
+- `schemas/capability-token.json` → 1.1: `scope` enum gains
+  `read_topology`; `granted_to` is now `oneOf [phipUri, "*"]`. MINOR
+  bump per VERSIONING.md (additive enum value, additive type
+  alternative).
+- `schemas/meta.json` → 1.1: adds optional `disclosures` field.
+
+### Design notes
+
+Topology signature covers the JCS canonicalization of the response
+envelope `{ phip_id, page_length, disclosure, topology }` — not just
+the `topology` array — to bind the array to the object it describes
+and prevent re-attribution attacks. Each entry carries `event_hash`
+so consumers can verify chain continuity (`entry[N].previous_hash ==
+entry[N-1].event_hash`) without holding the full event payloads.
+`page_length` (not total `history_length`) is reported to avoid
+giving every reader a stable count fingerprint.
+
+Motivation: enables the "private design with publicly listed
+instances" composition pattern. Surfaced while implementing a
+read-only PhIP resolver in the
 [asap-pcb-dfm](https://github.com/vmc-7645/asap-pcb-dfm) pilot. See
-PR-link-here for proposal text, schema update, and Appendix A entry.
+[mfgs-us/phip#10](https://github.com/mfgs-us/phip/pull/10) for the
+draft PR.
 
 ## [0.1.0-draft] — 2026-04-09
 

@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mfgs-us/phip/schemas/topology-response.json",
+  "version": "1.0",
+  "title": "PhIP Topology Disclosure Response",
+  "description": "Schema for the response body returned by GET /.well-known/phip/history/{namespace}/{local-id}?disclosure=topology when the resolver supports topology disclosure (Section 11.5.6). Topology mode exposes chain shape (event IDs, types, timestamps, and per-event hash links) without payloads, actors, or per-event signatures, so an authority can publicly attest that a restricted object exists and has been modified along a particular chain without revealing its contents.",
+
+  "type": "object",
+  "required": [
+    "phip_id",
+    "page_length",
+    "disclosure",
+    "topology",
+    "topology_signature"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "phip_id": { "$ref": "#/$defs/phipUri" },
+
+    "page_length": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of entries in this `topology` page. NOT the total chain length — exposing total length would leak fingerprinting bits (Section 11.5.6.7). Clients walking a paginated topology MUST count their own running total across pages."
+    },
+
+    "disclosure": {
+      "type": "string",
+      "const": "topology",
+      "description": "Marker confirming this is a topology disclosure response, not a full-history response."
+    },
+
+    "topology": {
+      "type": "array",
+      "description": "Ordered slice of the object's event chain shape. Order matches the request's `order` parameter (default ascending). MAY be empty for a newly created object resolved before its first event lands.",
+      "items": { "$ref": "#/$defs/topologyEntry" }
+    },
+
+    "topology_signature": {
+      "$ref": "#/$defs/topologySignature",
+      "description": "Ed25519 signature, by a resolver authority key, over the JCS canonicalization of the OBJECT { phip_id, page_length, disclosure, topology } — the entire envelope minus the signature itself. Attests resolver-observed shape at response time; does NOT attest end-to-end chain integrity (that requires `read_history`)."
+    },
+
+    "next_cursor": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "minLength": 1 }
+      ],
+      "description": "Pagination cursor for the next page, or null when no more events. Cursor semantics match Section 12.2.2."
+    }
+  },
+
+  "$defs": {
+    "phipUri": {
+      "type": "string",
+      "pattern": "^phip://[A-Za-z0-9.-]+/[A-Za-z0-9._~%-]+(?:/[A-Za-z0-9._~%-]+)+$"
+    },
+
+    "topologyEntry": {
+      "type": "object",
+      "required": ["event_id", "type", "timestamp", "previous_hash", "event_hash"],
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "pattern": "^([A-Za-z][A-Za-z0-9_-]*-)?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+          "description": "Verbatim event_id from the underlying full event."
+        },
+        "type": {
+          "oneOf": [
+            { "$ref": "#/$defs/coreEventType" },
+            { "type": "string", "const": "redacted" }
+          ],
+          "description": "Verbatim event type from the underlying full event, OR the literal string 'redacted' if the authority considers the type itself sensitive (Section 11.5.6.3)."
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+\\-]\\d{2}:\\d{2})$"
+        },
+        "previous_hash": {
+          "oneOf": [
+            { "type": "string", "const": "genesis" },
+            { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+          ],
+          "description": "Verbatim `previous_hash` from the underlying full event. For entry N>0 in a fully-disclosed chain, MUST equal `event_hash` of entry N-1 — this is what makes the topology chain-verifiable."
+        },
+        "event_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "SHA-256 of the JCS canonicalization of the full underlying event (the same value that would appear as `previous_hash` on the next event). Lets topology-only consumers walk the chain without having the full event payloads."
+        }
+      }
+    },
+
+    "coreEventType": {
+      "type": "string",
+      "enum": [
+        "created",
+        "state_transition",
+        "attribute_update",
+        "relation_added",
+        "relation_removed",
+        "software_update",
+        "measurement",
+        "process",
+        "lot_split",
+        "lot_merge",
+        "note",
+        "authority_transfer"
+      ]
+    },
+
+    "topologySignature": {
+      "type": "object",
+      "required": ["algorithm", "key_id", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": { "type": "string", "const": "Ed25519" },
+        "key_id": { "$ref": "#/$defs/phipUri" },
+        "value": {
+          "type": "string",
+          "pattern": "^(base64url:)?[A-Za-z0-9_\\-]+={0,2}$"
+        }
+      }
+    }
+  }
+}
