@@ -2146,7 +2146,7 @@ The `phip:access` attribute namespace defines the following fields:
 | Policy | Meaning |
 |---|---|
 | `public` | Anyone may GET, read history, and match in QUERY. Default if `phip:access` is absent. |
-| `authenticated` | Caller MUST present a valid capability token with any `read_*` scope, regardless of `granted_to` |
+| `authenticated` | Caller MUST present a valid capability token with any `read_*` scope appropriate to the requested operation (§11.5.2 step 5), regardless of `granted_to` |
 | `capability` | Caller MUST present a capability token whose `granted_to` matches the requesting actor and whose scope covers the requested operation |
 | `private` | No external reads. Only the authority itself may read. |
 
@@ -2173,20 +2173,22 @@ order:
    `MISSING_CAPABILITY` (403).
 4. Verify the token signature, expiry, and `granted_to` per Section 
    11.3.4 steps 1–4.
-5. Verify the token's `scope` covers the requested operation:
-   - If `scope == "read_topology"`: (a) if the resolver does not
-     advertise topology disclosure in `/meta.disclosures` (§12.7),
-     reject with `OPERATION_NOT_SUPPORTED` (405) — the token is
-     structurally valid but the resolver cannot honor it; (b)
-     otherwise, the token covers GET history only when the request
-     URL contains `disclosure=topology`. A `read_topology` token
-     presented WITHOUT that query parameter is treated as
-     scope-insufficient and rejected with `INVALID_CAPABILITY`
-     (403).
-   - GET requires `read_state` or `read_history`
-   - GET history requires `read_history` for the default response,
-     OR `read_topology` per the substep above
-   - QUERY requires `read_query`
+5. Verify the token's `scope` covers the requested operation. The
+   mapping is:
+
+   | Operation | Token scope that covers it |
+   |---|---|
+   | GET (state) | `read_state` or `read_history` |
+   | GET history (default response) | `read_history` |
+   | GET history with `?disclosure=topology` | `read_history` or `read_topology` (the latter requires the resolver to advertise topology in `/meta.disclosures`; otherwise return `OPERATION_NOT_SUPPORTED` (405) — see §11.5.6.1) |
+   | QUERY | `read_query` |
+
+   A presented scope that does not appear in the matching row is
+   scope-insufficient and MUST be rejected with `INVALID_CAPABILITY`
+   (403). In particular, a `read_topology` token presented to any
+   operation other than GET history with `?disclosure=topology` is
+   scope-insufficient.
+
 6. Verify the token's `object_filter` matches the target `phip_id`. For 
    QUERY, the filter restricts which objects can be returned in the 
    match list — objects outside the filter MUST be silently omitted, 
@@ -2195,8 +2197,11 @@ order:
    `granted_to`. When `granted_to` is the literal string `"*"`, this 
    check is skipped (§11.3.1) — the token grants any presenter.
 
-If any check fails, return `ACCESS_DENIED` (403) for policy mismatches 
-or `INVALID_CAPABILITY` (403) for token defects.
+If any check fails, return `ACCESS_DENIED` (403) for policy mismatches,
+`INVALID_CAPABILITY` (403) for token defects (including scope
+insufficiency), or `OPERATION_NOT_SUPPORTED` (405) when the resolver
+does not implement a requested optional feature (currently: topology
+disclosure under §11.5.6).
 
 #### 11.5.3 QUERY Filtering
 
@@ -2252,9 +2257,10 @@ Topology disclosure is OPTIONAL. A resolver advertises support by
 including `"topology"` in the `disclosures` array of its `/meta`
 document (§12.7). Resolvers that do not advertise topology support
 MUST reject `read_topology` tokens with `OPERATION_NOT_SUPPORTED`
-(405) per §11.5.2 step 5(a) — the token is structurally valid but
-the resolver cannot honor it. Clients SHOULD check `/meta` before
-presenting a `read_topology` token rather than probing.
+(405) per the §11.5.2 step 5 scope table — the token is
+structurally valid but the resolver cannot honor it. Clients SHOULD
+check `/meta` before presenting a `read_topology` token rather than
+probing.
 
 The `read_topology` scope grants **only** the topology disclosure
 mode described in this subsection. It does NOT authorize GET state,
@@ -2276,16 +2282,22 @@ Authorization: PhIP-Capability <token>
 ```
 
 A caller holding `read_history` MAY also include
-`disclosure=topology`, in which case the resolver MUST honor it and
-return the topology shape. This lets clients that don't need payload
-contents reduce bandwidth.
+`disclosure=topology`. If the resolver advertises topology support
+in `/meta.disclosures` it MUST honor the parameter and return the
+topology shape, letting clients that don't need payload contents
+reduce bandwidth. If the resolver does NOT advertise topology
+support, it MAY EITHER ignore the parameter and return the full
+history form OR reject with `OPERATION_NOT_SUPPORTED` (405) —
+implementer's choice, but the behavior MUST be consistent across
+calls so clients can distinguish "feature unavailable" from
+"feature off for this object".
 
 A `read_topology` token presented to GET history WITHOUT
 `disclosure=topology` is scope-insufficient and MUST be rejected with
-`INVALID_CAPABILITY` (403) per §11.5.2 step 5(b). Absent the
-`disclosure` parameter (and absent a `read_topology` token), the
-resolver returns the full history form (§12.2.1) when the caller's
-scope permits.
+`INVALID_CAPABILITY` (403) per the §11.5.2 step 5 scope table.
+Absent the `disclosure` parameter (and absent a `read_topology`
+token), the resolver returns the full history form (§12.2.1) when
+the caller's scope permits.
 
 ##### 11.5.6.3 Topology Response Shape
 
@@ -2382,6 +2394,17 @@ Verification:
    top-level fields in the response.
 3. JCS-canonicalize that object.
 4. Verify the Ed25519 signature against the resulting bytes.
+
+If any step fails — `key_id` does not resolve, the public key
+returned is outside its `not_before`/`not_after` window (§11.2), or
+the Ed25519 signature does not verify — the response MUST be
+treated as untrusted. Consumers MUST NOT cache it, persist it, act
+on it, or surface it to downstream verifiers as if it had been
+attested. Consumers SHOULD retry once against the same authority
+(the failure may be a transient resolver misconfiguration) and
+SHOULD escalate to operators if the failure persists, since a
+signature mismatch is the wire-level signal of resolver compromise
+or man-in-the-middle.
 
 The topology signature attests that the resolver, acting for the
 authority, observed a chain with exactly this shape at the time of
