@@ -2147,7 +2147,7 @@ The `phip:access` attribute namespace defines the following fields:
 |---|---|
 | `public` | Anyone may GET, read history, and match in QUERY. Default if `phip:access` is absent. |
 | `authenticated` | Caller MUST present a valid capability token with any `read_*` scope appropriate to the requested operation (§11.5.2 step 5), regardless of `granted_to` |
-| `capability` | Caller MUST present a capability token whose `granted_to` matches the requesting actor and whose scope covers the requested operation |
+| `capability` | Caller MUST present a capability token whose `granted_to` matches the requesting actor (or is the literal `"*"`, which makes the token presenter-anonymous; see §11.3.1) and whose scope covers the requested operation |
 | `private` | No external reads. Only the authority itself may read. |
 
 The policy applies to GET (`/resolve/`), GET history (`/history/`), and 
@@ -2180,7 +2180,7 @@ order:
    |---|---|
    | GET (state) | `read_state` or `read_history` |
    | GET history (default response) | `read_history` |
-   | GET history with `?disclosure=topology` | `read_history` or `read_topology` (the latter requires the resolver to advertise topology in `/meta.disclosures`; otherwise return `OPERATION_NOT_SUPPORTED` (405) — see §11.5.6.1) |
+   | GET history with `?disclosure=topology` | `read_history` or `read_topology` |
    | QUERY | `read_query` |
 
    A presented scope that does not appear in the matching row is
@@ -2188,6 +2188,15 @@ order:
    (403). In particular, a `read_topology` token presented to any
    operation other than GET history with `?disclosure=topology` is
    scope-insufficient.
+
+   Separately from scope coverage: if the operation requires an
+   optional feature the resolver does not advertise (currently:
+   topology disclosure via `/meta.disclosures`, §11.5.6.1), the
+   resolver MUST return `OPERATION_NOT_SUPPORTED` (405) regardless
+   of whether the presented scope would otherwise cover the
+   operation. This check applies even when scope coverage is
+   nominally satisfied — feature availability is a precondition,
+   not a scope question.
 
 6. Verify the token's `object_filter` matches the target `phip_id`. For 
    QUERY, the filter restricts which objects can be returned in the 
@@ -2225,6 +2234,12 @@ to a restricted object MUST NOT include `current_head` if the pushing
 actor lacks a `read_state` or `read_history` scope; the resolver MUST 
 instead return `ACCESS_DENIED` (403) and require the pusher to obtain 
 read scope before retrying.
+
+The above restrictions do not apply to topology disclosure (§11.5.6).
+Topology mode is the canonical disclosed view of chain head and
+shape — the last entry's `event_hash` IS the chain head, exposed
+deliberately under its own scope and authorization rules. It is not
+a "side channel" in the sense of this section.
 
 #### 11.5.5 Public-By-Default Rationale
 
@@ -2288,9 +2303,10 @@ topology shape, letting clients that don't need payload contents
 reduce bandwidth. If the resolver does NOT advertise topology
 support, it MAY EITHER ignore the parameter and return the full
 history form OR reject with `OPERATION_NOT_SUPPORTED` (405) —
-implementer's choice, but the behavior MUST be consistent across
-calls so clients can distinguish "feature unavailable" from
-"feature off for this object".
+implementer's choice. Resolvers SHOULD pick one of these two
+behaviors and apply it consistently; flipping between calls makes
+it hard for clients to distinguish "feature unavailable" from
+"feature off for this object."
 
 A `read_topology` token presented to GET history WITHOUT
 `disclosure=topology` is scope-insufficient and MUST be rejected with
@@ -2339,7 +2355,7 @@ Each topology entry MUST contain exactly these five fields:
 | `type` | Verbatim event type. An authority MAY substitute the literal string `"redacted"` if the type itself is sensitive |
 | `timestamp` | Verbatim from the underlying full event |
 | `previous_hash` | Verbatim from the underlying full event |
-| `event_hash` | `sha256:` + 64-hex of the JCS canonicalization of the full underlying event (Section 10.3) — the same value that would appear as `previous_hash` on the next event |
+| `event_hash` | `sha256:` + 64-hex of the JCS canonicalization of the full underlying event (Section 10.3) — the same value that would appear as `previous_hash` on the next event. The `event_hash` of the chronologically last entry on the final page IS the chain head referenced in §11.5.4; topology mode deliberately exposes it under this disclosure's authorization rules |
 
 The `payload`, `actor`, and per-event `signature` fields MUST NOT
 appear in topology mode.
