@@ -436,6 +436,17 @@ async function main() {
       rMeta.headers && typeof rMeta.headers["cache-control"] === "string"
         && rMeta.headers["cache-control"].includes("max-age"),
     );
+    // If /meta.disclosures is present, it MUST be an array of strings per
+    // schemas/meta.json. A server that intends to advertise topology but
+    // mis-renders this field would otherwise silently fail the §21 skip
+    // gate without anyone noticing.
+    if ("disclosures" in rMeta.body) {
+      test(
+        "/meta.disclosures is an array of strings",
+        Array.isArray(rMeta.body.disclosures)
+          && rMeta.body.disclosures.every((d) => typeof d === "string"),
+      );
+    }
   }
 
   // ── 12. Batch CREATE — mixed outcomes → 207 ───────────────────────
@@ -1218,7 +1229,10 @@ async function main() {
       object_filter: TOPO_RESTRICTED_PHIP,
     });
 
-    // Path A: read_topology + ?disclosure=topology → 200 with topology body.
+    // Path A: read_topology + ?disclosure=topology → 200 with a
+    // well-formed, signed, chain-verifiable topology body. We re-run
+    // the same shape + signature + chain checks as the public-object
+    // probe above so the gated path is exercised at equal rigor.
     const rPathA = await request(
       "GET",
       `/.well-known/phip/history/${NAMESPACE}/${TOPO_RESTRICTED_LOCAL}?disclosure=topology`,
@@ -1230,10 +1244,80 @@ async function main() {
       rPathA.status === 200,
       `got ${rPathA.status}`,
     );
+
+    const bodyA = rPathA.body;
     test(
-      "topology+capability: response body is topology mode",
-      rPathA.body && rPathA.body.disclosure === "topology",
+      "topology+capability: response body is topology mode with matching phip_id",
+      bodyA && bodyA.disclosure === "topology" && bodyA.phip_id === TOPO_RESTRICTED_PHIP,
     );
+    test(
+      "topology+capability: page_length matches topology.length",
+      bodyA && typeof bodyA.page_length === "number"
+        && Array.isArray(bodyA.topology) && bodyA.page_length === bodyA.topology.length,
+    );
+    test(
+      "topology+capability: first entry previous_hash === 'genesis'",
+      bodyA && bodyA.topology[0] && bodyA.topology[0].previous_hash === "genesis",
+    );
+    test(
+      "topology+capability: entries have exactly the five canonical fields",
+      Array.isArray(bodyA && bodyA.topology)
+        && bodyA.topology.every((e) => {
+          const ks = Object.keys(e).sort();
+          return ks.length === 5
+            && ks[0] === "event_hash"
+            && ks[1] === "event_id"
+            && ks[2] === "previous_hash"
+            && ks[3] === "timestamp"
+            && ks[4] === "type";
+        }),
+    );
+
+    // Chain walk on the restricted object.
+    let walkOkA = true;
+    for (let i = 1; bodyA && bodyA.topology && i < bodyA.topology.length; i++) {
+      if (bodyA.topology[i].previous_hash !== bodyA.topology[i - 1].event_hash) {
+        walkOkA = false;
+        break;
+      }
+    }
+    test("topology+capability: chain walk holds", walkOkA);
+
+    // Signature verification on the restricted object.
+    const sigA = bodyA && bodyA.topology_signature;
+    test(
+      "topology+capability: topology_signature object well-formed",
+      sigA && sigA.algorithm === "Ed25519" && typeof sigA.key_id === "string" && typeof sigA.value === "string",
+    );
+    if (sigA && sigA.key_id) {
+      const canonicalSignedA = {
+        disclosure: bodyA.disclosure,
+        page_length: bodyA.page_length,
+        phip_id: bodyA.phip_id,
+        topology: bodyA.topology,
+      };
+      const signedBytesA = Buffer.from(canonicalize(canonicalSignedA), "utf8");
+      const sigBytesA = Buffer.from(sigA.value, "base64url");
+      const keyResolveUrlA = sigA.key_id.replace(/^phip:\/\/[^/]+/, "");
+      const rKeyA = await request("GET", `/.well-known/phip/resolve${keyResolveUrlA}`);
+      const xA = rKeyA.body
+        && rKeyA.body.attributes
+        && rKeyA.body.attributes["phip:keys"]
+        && rKeyA.body.attributes["phip:keys"].x;
+      if (!xA) {
+        test(
+          "topology+capability: signing key resolves and exposes phip:keys.x",
+          false,
+          `could not resolve ${sigA.key_id}`,
+        );
+      } else {
+        const rawPubA = Buffer.from(xA, "base64url");
+        const spkiA = Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), rawPubA]);
+        const pubKeyA = crypto.createPublicKey({ key: spkiA, format: "der", type: "spki" });
+        const verifiedA = crypto.verify(null, signedBytesA, pubKeyA, sigBytesA);
+        test("topology+capability: topology_signature verifies", verifiedA);
+      }
+    }
 
     // Path B: read_topology WITHOUT ?disclosure=topology → 403 INVALID_CAPABILITY.
     const rPathB = await request(

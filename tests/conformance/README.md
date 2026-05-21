@@ -44,18 +44,29 @@ without CREATE collisions.
 
 ## What it tests
 
-| # | Section  | Behaviour                                                   |
-|---|----------|-------------------------------------------------------------|
-| 1 | 11.2.4   | Self-signed bootstrap actor CREATE                          |
-| 2 | 12.1     | CREATE component in concept state                           |
-| 3 | 12.2     | GET projects `phip_id`, `state`, `history_length`, head     |
-| 4 | 12.3, 9  | PUSH `state_transition` concept → design                    |
-| 5 | 12.3     | PUSH `attribute_update` into `phip:software`                |
-| 6 | 9.2.1    | Invalid transition rejected with `INVALID_TRANSITION`       |
-| 7 | 12.3.1   | Stale `previous_hash` → 409 `CHAIN_CONFLICT` with head      |
-| 8 | 12.2.1   | `/history/` returns all events with verifiable chain        |
-| 9 | 12.4     | QUERY by `object_type` and by `state`                       |
-| 10| 12.5     | `OBJECT_NOT_FOUND`, `OBJECT_EXISTS` envelopes               |
+| #  | Section          | Behaviour                                                   |
+|----|------------------|-------------------------------------------------------------|
+| 1  | 11.2.4           | Self-signed bootstrap actor CREATE                          |
+| 2  | 12.1             | CREATE component in concept state                           |
+| 3  | 12.2             | GET projects `phip_id`, `state`, `history_length`, head     |
+| 4  | 12.3, 9          | PUSH `state_transition` concept → design                    |
+| 5  | 12.3             | PUSH `attribute_update` into `phip:software`                |
+| 6  | 9.2.1            | Invalid transition rejected with `INVALID_TRANSITION`       |
+| 7  | 12.3.1           | Stale `previous_hash` → 409 `CHAIN_CONFLICT` with head      |
+| 8  | 12.2.1           | `/history/` returns all events with verifiable chain        |
+| 9  | 12.4             | QUERY by `object_type` and by `state`                       |
+| 10 | 12.5             | `OBJECT_NOT_FOUND`, `OBJECT_EXISTS` envelopes               |
+| 11 | 12.7             | `/meta` document shape; `disclosures` is array-of-strings when present. OPTIONAL — skipped when `/meta` is absent |
+| 12 | 12.5             | Batch CREATE — mixed-outcome 207 and all-succeed 200. OPTIONAL — skipped when `batch_create` not advertised |
+| 13 | 6.2, 6.3         | `design` object type and `instance_of` target constraint    |
+| 14 | 7.4              | `DANGLING_RELATION` for same-authority broken refs          |
+| 15 | 10.4.1           | `process` event yield_fraction sum ≤ 1 + ε                  |
+| 16 | 10.5.1           | `lot_split`/`lot_merge` mass conservation                   |
+| 17 | 11.4.2           | `measurement` event payload shape                           |
+| 18 | 11.5             | `phip:access` policies (`private`, `authenticated`); valid/forged/expired capability tokens |
+| 19 | 4.6              | `authority_transfer` event acceptance                       |
+| 20 | 4.5, 4.6         | Federation mechanics — delegation 307, successor 308. OPTIONAL — opt-in via `/meta.delegations` / `/meta.successor` |
+| 21 | 11.5.6           | Topology disclosure — public-object shape + signature + chain walk; restricted-object token paths (`read_topology "*"`, missing disclosure 403, missing token 403, GET-state scope mismatch 403). OPTIONAL — skipped when `/meta.disclosures` lacks `"topology"` |
 
 The suite signs all events with the first fixed Ed25519 keypair from
 `vectors/ed25519/keypair.json` — the server therefore only needs to verify
@@ -64,7 +75,6 @@ signatures, not hold any credentials of its own.
 ## Out of scope for v0.1
 
 * Cross-authority GET (resolver discovery — Section 4.3, currently `[TODO]`)
-* Capability tokens (Section 11.3) — v0 is intra-namespace only
 * Pagination cursor behaviour past 100 events
 * Archived-state `note`-only acceptance — added once operational-track
   CREATE is exercised
