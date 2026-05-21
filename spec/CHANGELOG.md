@@ -52,6 +52,20 @@ entry[N-1].event_hash`) without holding the full event payloads.
 `page_length` (not total `history_length`) is reported to avoid
 giving every reader a stable count fingerprint.
 
+Error code mapping for the new failure modes (mapped to §12.6
+existing codes — no new codes introduced):
+- Resolver doesn't advertise topology, but a `read_topology` token
+  is presented → `OPERATION_NOT_SUPPORTED` (405).
+- `read_topology` token presented to GET history WITHOUT
+  `disclosure=topology` → `INVALID_CAPABILITY` (403,
+  "scope insufficient").
+- Token defects (malformed, expired, forged signature) remain
+  `INVALID_CAPABILITY` (403) as in §11.3.4 / §11.5.2.
+
+Cache-Control: topology responses MUST be `no-store` (or
+`private, max-age=0`) — the `topology_signature` is fresh per
+response and a cached topology can't be trusted.
+
 Motivation: enables the "private design with publicly listed
 instances" composition pattern. Surfaced while implementing a
 read-only PhIP resolver in the
