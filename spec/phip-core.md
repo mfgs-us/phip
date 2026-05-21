@@ -2404,10 +2404,8 @@ verification at any conformant peer.
 Verification:
 
 1. Resolve `key_id` to the public key (§11.2).
-2. Construct a JSON object containing EXACTLY
-   `disclosure`, `page_length`, `phip_id`, and `topology`, with
-   their verbatim values from the response. Ignore all other
-   top-level fields in the response.
+2. Construct the canonical signed object from the four fields named
+   above (`disclosure`, `page_length`, `phip_id`, `topology`).
 3. JCS-canonicalize that object.
 4. Verify the Ed25519 signature against the resulting bytes.
 
@@ -2450,7 +2448,7 @@ response served from an HTTP cache cannot be trusted because the
 freshness guarantee that `topology_signature` provides is bound to
 the time of signing.
 
-##### 11.5.6.5 Pagination
+##### 11.5.6.5 Pagination and Order
 
 Topology mode honors the same `limit` and `cursor` parameters as
 full history (§12.2.1). The `topology_signature` covers only the
@@ -2458,6 +2456,16 @@ events on the current page; consumers stitching paginated topology
 MUST verify each page's signature independently AND check the
 inter-page `previous_hash`/`event_hash` link (§11.5.6.4) to confirm
 the stitched chain is contiguous.
+
+Topology mode MUST return events in ascending chain order — oldest
+first, genesis at index 0 of the first page. The `?order` query
+parameter from §12.2.1 is ignored in topology mode; resolvers MUST
+NOT honor `?order=desc` for a `?disclosure=topology` request.
+Ascending order is mandatory so the §11.5.6.4 chain-walk check
+(`entry[N].previous_hash == entry[N-1].event_hash`) applies
+uniformly; a descending topology would invert the check, requiring
+consumers to special-case direction and defeating the purpose of
+having a single canonical verification path.
 
 ##### 11.5.6.6 Cross-Authority Composition
 

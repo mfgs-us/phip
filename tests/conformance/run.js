@@ -1038,6 +1038,131 @@ async function main() {
     }
   }
 
+  // ── 21. Topology disclosure (§11.5.6 — OPTIONAL) ──────────────────
+  // Skips entire section if the resolver does not advertise
+  // /meta.disclosures: ["topology"]. When advertised, probes the
+  // /history endpoint with ?disclosure=topology against an object we
+  // created earlier in this run and verifies the response shape,
+  // ordering, signature mechanics, and chain-walk rule.
+  console.log(`\n[21] topology disclosure (§11.5.6, opt-in)`);
+  const supportsTopology = metaPublished
+    && Array.isArray(rMeta.body.disclosures)
+    && rMeta.body.disclosures.includes("topology");
+  if (!supportsTopology) {
+    console.log("  (skipped — /meta.disclosures does not include 'topology')");
+  } else {
+    const rTopo = await request(
+      "GET",
+      `/.well-known/phip/history/${NAMESPACE}/${OBJ_LOCAL_ID}?disclosure=topology`,
+    );
+    test("topology GET returns 200", rTopo.status === 200, `got ${rTopo.status}`);
+
+    const cacheCtl = rTopo.headers && (rTopo.headers["cache-control"] || "");
+    test(
+      "topology response sets Cache-Control: no-store (or max-age=0)",
+      typeof cacheCtl === "string"
+        && (cacheCtl.includes("no-store") || /max-age=\s*0\b/.test(cacheCtl)),
+      `got '${cacheCtl}'`,
+    );
+
+    const body = rTopo.body;
+    test("topology body has disclosure='topology'", body && body.disclosure === "topology");
+    test("topology body has phip_id matching the request", body && body.phip_id === OBJ_PHIP_ID);
+    test(
+      "topology body has page_length matching topology.length",
+      body && typeof body.page_length === "number"
+        && Array.isArray(body.topology) && body.page_length === body.topology.length,
+    );
+    test(
+      "topology entries have the five canonical fields and nothing else",
+      Array.isArray(body && body.topology)
+        && body.topology.every((e) => {
+          const ks = Object.keys(e).sort();
+          return ks.length === 5
+            && ks[0] === "event_hash"
+            && ks[1] === "event_id"
+            && ks[2] === "previous_hash"
+            && ks[3] === "timestamp"
+            && ks[4] === "type";
+        }),
+    );
+    test(
+      "topology first entry previous_hash === 'genesis' (ascending order)",
+      body && body.topology[0] && body.topology[0].previous_hash === "genesis",
+    );
+
+    // Chain walk: entry[N].previous_hash MUST equal entry[N-1].event_hash.
+    let walkOk = true;
+    for (let i = 1; body && body.topology && i < body.topology.length; i++) {
+      if (body.topology[i].previous_hash !== body.topology[i - 1].event_hash) {
+        walkOk = false;
+        break;
+      }
+    }
+    test("topology chain walk: previous_hash links match event_hashes", walkOk);
+
+    // Topology signature: covers JCS({disclosure, page_length, phip_id, topology}).
+    const sig = body && body.topology_signature;
+    test(
+      "topology_signature object present with algorithm/key_id/value",
+      sig && sig.algorithm === "Ed25519" && typeof sig.key_id === "string" && typeof sig.value === "string",
+    );
+
+    if (sig && sig.key_id) {
+      const canonicalSigned = {
+        disclosure: body.disclosure,
+        page_length: body.page_length,
+        phip_id: body.phip_id,
+        topology: body.topology,
+      };
+      const signedBytes = Buffer.from(canonicalize(canonicalSigned), "utf8");
+      const sigBytes = Buffer.from(sig.value, "base64url");
+
+      // Resolve the key_id to a public key (the resolver MUST expose it as
+      // an actor with phip:keys; §11.2.4). For the conformance probe we
+      // simply GET the actor and read its phip:keys.x.
+      const keyResolveUrl = sig.key_id.replace(/^phip:\/\/[^/]+/, "");
+      const rKey = await request("GET", `/.well-known/phip/resolve${keyResolveUrl}`);
+      const x = rKey.body
+        && rKey.body.attributes
+        && rKey.body.attributes["phip:keys"]
+        && rKey.body.attributes["phip:keys"].x;
+      if (!x) {
+        test(
+          "topology signing key resolves and exposes phip:keys.x",
+          false,
+          `could not resolve ${sig.key_id}`,
+        );
+      } else {
+        const rawPub = Buffer.from(x, "base64url");
+        const spki = Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), rawPub]);
+        const pubKey = crypto.createPublicKey({ key: spki, format: "der", type: "spki" });
+        const verified = crypto.verify(null, signedBytes, pubKey, sigBytes);
+        test("topology_signature verifies against resolved key", verified);
+      }
+    }
+
+    // ?order=desc MUST be ignored in topology mode (§11.5.6.5).
+    const rDesc = await request(
+      "GET",
+      `/.well-known/phip/history/${NAMESPACE}/${OBJ_LOCAL_ID}?disclosure=topology&order=desc`,
+    );
+    test(
+      "topology ignores ?order=desc (still ascending)",
+      rDesc.status === 200
+        && rDesc.body && rDesc.body.topology
+        && rDesc.body.topology[0] && rDesc.body.topology[0].previous_hash === "genesis",
+    );
+
+    // read_history token without ?disclosure=topology returns full history.
+    // (Bare GET history is already tested earlier; here we just confirm
+    // adding the param against a non-restricted object also yields topology.)
+
+    // Untokened request: still topology (object is public in our test run).
+    // But §11.5.6 grants this implicitly through normal /history access.
+    // No additional assertion — the first GET above covered it.
+  }
+
   // ── summary ───────────────────────────────────────────────────────
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail > 0) {

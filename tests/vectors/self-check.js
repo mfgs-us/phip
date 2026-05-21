@@ -335,5 +335,72 @@ console.log("\n[bundle]");
   }
 }
 
+// ── Topology disclosure — Section 11.5.6 ───────────────────────────
+console.log("\n[topology]");
+{
+  const KEYS = {
+    "test-key-alice": loadKey({
+      id: "test-key-alice",
+      private_pkcs8_b64: "MC4CAQAwBQYDK2VwBCIEILYVuTR2efrX2+iRiMd6EmrgZNMaFhxPi8HpoS/N7PUh",
+      public_raw_b64url: "-PMJVmvQQLw38uBOg3w4CXVk6CkadzUozxMUTzq96Ws",
+    }),
+  };
+
+  function verifyTopologySignature(response, keyId) {
+    // §11.5.6.4: construct {disclosure, page_length, phip_id, topology}
+    // from the response verbatim and JCS-canonicalize. Ignore all other
+    // top-level fields.
+    const canonicalSigned = {
+      disclosure: response.disclosure,
+      page_length: response.page_length,
+      phip_id: response.phip_id,
+      topology: response.topology,
+    };
+    const bytes = Buffer.from(canonicalize(canonicalSigned), "utf8");
+    const sigBytes = Buffer.from(response.topology_signature.value, "base64url");
+    return crypto.verify(null, bytes, KEYS[keyId].publicKey, sigBytes);
+  }
+
+  function walkChain(topology) {
+    // entry[N].previous_hash MUST equal entry[N-1].event_hash for N > 0.
+    for (let i = 1; i < topology.length; i++) {
+      if (topology[i].previous_hash !== topology[i - 1].event_hash) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  const { cases } = load("topology/cases.json");
+  for (const c of cases) {
+    if (c.pages) {
+      const sigResults = c.pages.map((p) => verifyTopologySignature(p, c.verifying_key_id));
+      assert(
+        sigResults[0] === c.expected.page_signatures_verify[0]
+          && sigResults[1] === c.expected.page_signatures_verify[1],
+        `topology ${c.name} per-page signatures match expected`,
+      );
+      const interOk =
+        c.pages[1].topology[0].previous_hash
+        === c.pages[0].topology[c.pages[0].topology.length - 1].event_hash;
+      assert(
+        interOk === c.expected.inter_page_link_holds,
+        `topology ${c.name} inter-page link holds`,
+      );
+    } else {
+      const sigOk = verifyTopologySignature(c.response, c.verifying_key_id);
+      assert(
+        sigOk === c.expected.signature_verifies,
+        `topology ${c.name} signature ${c.expected.signature_verifies ? "verifies" : "rejects"}`,
+      );
+      const walkOk = walkChain(c.response.topology);
+      assert(
+        walkOk === c.expected.chain_walk_succeeds,
+        `topology ${c.name} chain walk ${c.expected.chain_walk_succeeds ? "succeeds" : "rejects"}`,
+      );
+    }
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

@@ -31,13 +31,13 @@
 
     "topology": {
       "type": "array",
-      "description": "Ordered slice of the object's event chain shape. Order matches the request's `order` parameter (default ascending). MAY be empty for a newly created object resolved before its first event lands.",
+      "description": "Slice of the object's event chain shape, always in ascending chain order (oldest first; genesis at index 0 on the first page). The request's `?order` parameter is ignored in topology mode — see Section 11.5.6.5. MAY be empty when a paginated request returns no entries on the current page (e.g., a cursor past the end of the chain).",
       "items": { "$ref": "#/$defs/topologyEntry" }
     },
 
     "topology_signature": {
       "$ref": "#/$defs/topologySignature",
-      "description": "Ed25519 signature, by a resolver authority key, over the JCS canonicalization of the OBJECT { phip_id, page_length, disclosure, topology } — the entire envelope minus the signature itself. Attests resolver-observed shape at response time; does NOT attest end-to-end chain integrity (that requires `read_history`)."
+      "description": "Ed25519 signature, by a resolver authority key, over the JCS canonicalization of the OBJECT { phip_id, page_length, disclosure, topology } — the four canonical fields per Section 11.5.6.4. Any other top-level fields the resolver emits (e.g., served_at, debug hints) are NOT covered by the signature; verifiers MUST ignore them when reconstructing signed bytes. Attests resolver-observed shape at response time; does NOT attest end-to-end chain integrity (that requires `read_history`)."
     },
 
     "next_cursor": {

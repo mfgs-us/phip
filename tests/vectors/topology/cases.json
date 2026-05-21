@@ -1,0 +1,211 @@
+{
+  "description": "Topology disclosure test vectors (Section 11.5.6). Each case shows a topology response document, the key whose public bytes verify the topology_signature, and the expected verification outcomes. Implementations MUST agree on signature verification and on the chain-walk check (entry[N].previous_hash == entry[N-1].event_hash). The signed object is the four-field canonical envelope {disclosure, page_length, phip_id, topology} — verifiers MUST construct that object verbatim, JCS-canonicalize, and verify against the resolver's public key per §11.5.6.4.",
+  "cases": [
+    {
+      "name": "valid-multi-event",
+      "description": "3-event chain (created → state_transition → attribute_update). Signature MUST verify against test-key-alice's public key over the JCS canonicalization of {disclosure, page_length, phip_id, topology}. Chain walk MUST succeed: entry[N].previous_hash == entry[N-1].event_hash.",
+      "verifying_key_id": "test-key-alice",
+      "response": {
+        "phip_id": "phip://acme.example/projects/widget-v3",
+        "page_length": 3,
+        "disclosure": "topology",
+        "topology": [
+          {
+            "event_id": "40000000-0000-4000-a000-000000000001",
+            "type": "created",
+            "timestamp": "2026-01-15T09:00:00Z",
+            "previous_hash": "genesis",
+            "event_hash": "sha256:cff0bf391acbb147e95e6f70fa83536dc702736f7ad908553362ee77d2227b91"
+          },
+          {
+            "event_id": "40000000-0000-4000-a000-000000000002",
+            "type": "state_transition",
+            "timestamp": "2026-01-22T14:30:00Z",
+            "previous_hash": "sha256:cff0bf391acbb147e95e6f70fa83536dc702736f7ad908553362ee77d2227b91",
+            "event_hash": "sha256:efb7eedf9be5c7fa617335e206097e04a229974663261ebfb1b635c5ea7b1cb5"
+          },
+          {
+            "event_id": "40000000-0000-4000-a000-000000000003",
+            "type": "attribute_update",
+            "timestamp": "2026-02-01T10:00:00Z",
+            "previous_hash": "sha256:efb7eedf9be5c7fa617335e206097e04a229974663261ebfb1b635c5ea7b1cb5",
+            "event_hash": "sha256:aa6152d7ec0b671d06f89421e520431cef2dc1865cdd3a81163427e0257fd969"
+          }
+        ],
+        "topology_signature": {
+          "algorithm": "Ed25519",
+          "key_id": "phip://acme.example/keys/test-key-alice",
+          "value": "t3AmEfRJwjAbTZNd64IL5MsqAXZdrOdDx6qtCsS86OMDNMmVWrlh1foXQzCiamuujzlznZJYyXwQnrmmQQsFCw"
+        },
+        "next_cursor": null
+      },
+      "expected": {
+        "signature_verifies": true,
+        "chain_walk_succeeds": true
+      }
+    },
+    {
+      "name": "valid-single-event",
+      "description": "Genesis-only object — topology has one entry whose previous_hash is the literal 'genesis'. Signature verifies; chain walk is trivially satisfied (no inter-entry comparisons).",
+      "verifying_key_id": "test-key-alice",
+      "response": {
+        "phip_id": "phip://acme.example/projects/widget-v3",
+        "page_length": 1,
+        "disclosure": "topology",
+        "topology": [
+          {
+            "event_id": "40000000-0000-4000-a000-000000000001",
+            "type": "created",
+            "timestamp": "2026-01-15T09:00:00Z",
+            "previous_hash": "genesis",
+            "event_hash": "sha256:cff0bf391acbb147e95e6f70fa83536dc702736f7ad908553362ee77d2227b91"
+          }
+        ],
+        "topology_signature": {
+          "algorithm": "Ed25519",
+          "key_id": "phip://acme.example/keys/test-key-alice",
+          "value": "D-bSiRwTW2XpKzAeBGzbQxXVm-9a1Rs2Ar5QiuyOVxyBgRijXZeDDasRL1tnwMOa8oG3q8l-z02quqFnkOniCQ"
+        },
+        "next_cursor": null
+      },
+      "expected": {
+        "signature_verifies": true,
+        "chain_walk_succeeds": true
+      }
+    },
+    {
+      "name": "tampered-envelope",
+      "description": "phip_id mutated after the resolver signed the envelope. Verifiers reconstruct the canonical signed object from the (mutated) wire phip_id; the resulting JCS bytes differ from what the resolver signed, so the signature MUST fail.",
+      "verifying_key_id": "test-key-alice",
+      "response": {
+        "phip_id": "phip://acme.example/projects/widget-IMPOSTER",
+        "page_length": 2,
+        "disclosure": "topology",
+        "topology": [
+          {
+            "event_id": "40000000-0000-4000-a000-000000000001",
+            "type": "created",
+            "timestamp": "2026-01-15T09:00:00Z",
+            "previous_hash": "genesis",
+            "event_hash": "sha256:cff0bf391acbb147e95e6f70fa83536dc702736f7ad908553362ee77d2227b91"
+          },
+          {
+            "event_id": "40000000-0000-4000-a000-000000000002",
+            "type": "state_transition",
+            "timestamp": "2026-01-22T14:30:00Z",
+            "previous_hash": "sha256:cff0bf391acbb147e95e6f70fa83536dc702736f7ad908553362ee77d2227b91",
+            "event_hash": "sha256:efb7eedf9be5c7fa617335e206097e04a229974663261ebfb1b635c5ea7b1cb5"
+          }
+        ],
+        "topology_signature": {
+          "algorithm": "Ed25519",
+          "key_id": "phip://acme.example/keys/test-key-alice",
+          "value": "P2jOriGX61xcbzwZbRnLt6FDW6WY_tHkCDCHQsIg2U3_3t-7s9t_OcUxP1Aq0b4iZlJJFW1HaODv85dVqyjzAw"
+        },
+        "next_cursor": null
+      },
+      "expected": {
+        "signature_verifies": false,
+        "chain_walk_succeeds": true
+      },
+      "notes": "Chain walk still succeeds because the topology entries themselves are unmodified. The signature failure is the sole rejection signal."
+    },
+    {
+      "name": "tampered-chain-link",
+      "description": "entry[1].previous_hash mutated to a syntactically valid but incorrect sha256 value. The topology is then re-signed by the resolver, so the signature itself verifies — but the chain walk MUST reject because entry[1].previous_hash != entry[0].event_hash.",
+      "verifying_key_id": "test-key-alice",
+      "response": {
+        "phip_id": "phip://acme.example/projects/widget-v3",
+        "page_length": 2,
+        "disclosure": "topology",
+        "topology": [
+          {
+            "event_id": "40000000-0000-4000-a000-000000000001",
+            "type": "created",
+            "timestamp": "2026-01-15T09:00:00Z",
+            "previous_hash": "genesis",
+            "event_hash": "sha256:cff0bf391acbb147e95e6f70fa83536dc702736f7ad908553362ee77d2227b91"
+          },
+          {
+            "event_id": "40000000-0000-4000-a000-000000000002",
+            "type": "state_transition",
+            "timestamp": "2026-01-22T14:30:00Z",
+            "previous_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "event_hash": "sha256:efb7eedf9be5c7fa617335e206097e04a229974663261ebfb1b635c5ea7b1cb5"
+          }
+        ],
+        "topology_signature": {
+          "algorithm": "Ed25519",
+          "key_id": "phip://acme.example/keys/test-key-alice",
+          "value": "9HRURcdgnZTmWew3lfOcJNA-q3QK3ndqMtDclzftot7alUlP6wEjlDAeewOmYQt2IvY435qVvo0XQ-PHqPzxBg"
+        },
+        "next_cursor": null
+      },
+      "expected": {
+        "signature_verifies": true,
+        "chain_walk_succeeds": false
+      }
+    },
+    {
+      "name": "two-pages-stitchable",
+      "description": "Two pages of topology. Each page's signature MUST verify independently. The inter-page link is verified by checking page2.topology[0].previous_hash == page1.topology[-1].event_hash.",
+      "verifying_key_id": "test-key-alice",
+      "pages": [
+        {
+          "phip_id": "phip://acme.example/projects/widget-v3",
+          "page_length": 2,
+          "disclosure": "topology",
+          "topology": [
+            {
+              "event_id": "40000000-0000-4000-a000-000000000001",
+              "type": "created",
+              "timestamp": "2026-01-15T09:00:00Z",
+              "previous_hash": "genesis",
+              "event_hash": "sha256:cff0bf391acbb147e95e6f70fa83536dc702736f7ad908553362ee77d2227b91"
+            },
+            {
+              "event_id": "40000000-0000-4000-a000-000000000002",
+              "type": "state_transition",
+              "timestamp": "2026-01-22T14:30:00Z",
+              "previous_hash": "sha256:cff0bf391acbb147e95e6f70fa83536dc702736f7ad908553362ee77d2227b91",
+              "event_hash": "sha256:efb7eedf9be5c7fa617335e206097e04a229974663261ebfb1b635c5ea7b1cb5"
+            }
+          ],
+          "topology_signature": {
+            "algorithm": "Ed25519",
+            "key_id": "phip://acme.example/keys/test-key-alice",
+            "value": "P2jOriGX61xcbzwZbRnLt6FDW6WY_tHkCDCHQsIg2U3_3t-7s9t_OcUxP1Aq0b4iZlJJFW1HaODv85dVqyjzAw"
+          },
+          "next_cursor": "sha256:efb7eedf9be5c7fa617335e206097e04a229974663261ebfb1b635c5ea7b1cb5"
+        },
+        {
+          "phip_id": "phip://acme.example/projects/widget-v3",
+          "page_length": 1,
+          "disclosure": "topology",
+          "topology": [
+            {
+              "event_id": "40000000-0000-4000-a000-000000000003",
+              "type": "attribute_update",
+              "timestamp": "2026-02-01T10:00:00Z",
+              "previous_hash": "sha256:efb7eedf9be5c7fa617335e206097e04a229974663261ebfb1b635c5ea7b1cb5",
+              "event_hash": "sha256:aa6152d7ec0b671d06f89421e520431cef2dc1865cdd3a81163427e0257fd969"
+            }
+          ],
+          "topology_signature": {
+            "algorithm": "Ed25519",
+            "key_id": "phip://acme.example/keys/test-key-alice",
+            "value": "RfZXX-vNQNLi5lPDccAUuVINS7Vp9GzSz1XE5_uGnrMCHZ_0OenC57aU8L2VFCxpTT-mE2BePyZUkrWEey1QAA"
+          },
+          "next_cursor": null
+        }
+      ],
+      "expected": {
+        "page_signatures_verify": [
+          true,
+          true
+        ],
+        "inter_page_link_holds": true
+      }
+    }
+  ]
+}

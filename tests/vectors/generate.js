@@ -926,4 +926,250 @@ writeJson("bundle/cases.json", {
   bundles: [oneObjectBundle, multiObjectBundle, tamperedBundle],
 });
 
+// ─────────────────────────────────────────────────────────────────────
+// 11. Topology disclosure — Section 11.5.6
+// ─────────────────────────────────────────────────────────────────────
+//
+// A topology response exposes the chain shape of an object's event log
+// without payloads, actors, or per-event signatures. The whole envelope
+// (four canonical fields: disclosure, page_length, phip_id, topology)
+// is signed once by the resolver's authority key.
+//
+// Per §11.5.6.4 the topology_signature covers the JCS canonicalization
+// of an object containing EXACTLY {disclosure, page_length, phip_id,
+// topology} — verifiers ignore any other top-level fields the response
+// may carry.
+//
+// Per §11.5.6.5 topology is always returned in ascending chain order
+// (oldest first). The ?order parameter is ignored in topology mode.
+//
+// Cases:
+//   - valid-multi-event       : 3-event chain, signature + chain walk verify
+//   - valid-single-event      : genesis-only object
+//   - tampered-envelope       : phip_id mutated post-sign → signature rejects
+//   - tampered-chain-link     : entry[1].previous_hash != entry[0].event_hash
+//                               → walk rejects (signature still nominally
+//                               verifies against the tampered envelope when
+//                               re-signed; here we keep the original
+//                               signature, so signature ALSO rejects)
+//   - two-pages-stitchable    : two pages with a valid inter-page link
+
+const TOP_AUTHORITY = "acme.example";
+const TOP_RESOLVER_KEY_PHIP = `phip://${TOP_AUTHORITY}/keys/test-key-alice`;
+const TOP_OBJECT_PHIP = `phip://${TOP_AUTHORITY}/projects/widget-v3`;
+
+function topologyEntryFor(event) {
+  // Drop payload, actor, signature; expose only the five canonical fields.
+  return {
+    event_id: event.event_id,
+    type: event.type,
+    timestamp: event.timestamp,
+    previous_hash: event.previous_hash,
+    event_hash: hashEvent(event),
+  };
+}
+
+function signTopologyResponse({ phip_id, topology, key_id }) {
+  // §11.5.6.4: signature covers exactly {disclosure, page_length, phip_id, topology}.
+  // No other fields. JCS sorts keys lexically; the object literal below is
+  // for human readability — JCS produces identical bytes regardless of
+  // enumeration order.
+  const canonicalSigned = {
+    disclosure: "topology",
+    page_length: topology.length,
+    phip_id,
+    topology,
+  };
+  const sig = crypto.sign(null, canonicalBytes(canonicalSigned), getKey(key_id).privateKey);
+  return {
+    algorithm: "Ed25519",
+    key_id: TOP_RESOLVER_KEY_PHIP,
+    value: sig.toString("base64url"),
+  };
+}
+
+function buildTopologyResponse({ phip_id, topology, key_id, next_cursor = null }) {
+  return {
+    phip_id,
+    page_length: topology.length,
+    disclosure: "topology",
+    topology,
+    topology_signature: signTopologyResponse({ phip_id, topology, key_id }),
+    next_cursor,
+  };
+}
+
+// Build a 3-event chain: created → state_transition → attribute_update.
+const topEvt0 = signEvent(
+  {
+    event_id: "40000000-0000-4000-a000-000000000001",
+    phip_id: TOP_OBJECT_PHIP,
+    type: "created",
+    timestamp: "2026-01-15T09:00:00Z",
+    actor: TOP_RESOLVER_KEY_PHIP,
+    previous_hash: "genesis",
+    payload: { object_type: "design", state: "design" },
+  },
+  "test-key-alice",
+);
+const topEvt1 = signEvent(
+  {
+    event_id: "40000000-0000-4000-a000-000000000002",
+    phip_id: TOP_OBJECT_PHIP,
+    type: "state_transition",
+    timestamp: "2026-01-22T14:30:00Z",
+    actor: TOP_RESOLVER_KEY_PHIP,
+    previous_hash: hashEvent(topEvt0),
+    payload: { from: "design", to: "qualified" },
+  },
+  "test-key-alice",
+);
+const topEvt2 = signEvent(
+  {
+    event_id: "40000000-0000-4000-a000-000000000003",
+    phip_id: TOP_OBJECT_PHIP,
+    type: "attribute_update",
+    timestamp: "2026-02-01T10:00:00Z",
+    actor: TOP_RESOLVER_KEY_PHIP,
+    previous_hash: hashEvent(topEvt1),
+    payload: { namespace: "phip:mechanical", updates: { confidential: "redacted" } },
+  },
+  "test-key-alice",
+);
+
+const topologyCases = [];
+
+// Case 1: valid 3-event topology
+{
+  const topology = [topEvt0, topEvt1, topEvt2].map(topologyEntryFor);
+  topologyCases.push({
+    name: "valid-multi-event",
+    description:
+      "3-event chain (created → state_transition → attribute_update). " +
+      "Signature MUST verify against test-key-alice's public key over the " +
+      "JCS canonicalization of {disclosure, page_length, phip_id, topology}. " +
+      "Chain walk MUST succeed: entry[N].previous_hash == entry[N-1].event_hash.",
+    verifying_key_id: "test-key-alice",
+    response: buildTopologyResponse({
+      phip_id: TOP_OBJECT_PHIP,
+      topology,
+      key_id: "test-key-alice",
+    }),
+    expected: { signature_verifies: true, chain_walk_succeeds: true },
+  });
+}
+
+// Case 2: valid single-event (genesis-only)
+{
+  const topology = [topEvt0].map(topologyEntryFor);
+  topologyCases.push({
+    name: "valid-single-event",
+    description:
+      "Genesis-only object — topology has one entry whose previous_hash is " +
+      "the literal 'genesis'. Signature verifies; chain walk is trivially " +
+      "satisfied (no inter-entry comparisons).",
+    verifying_key_id: "test-key-alice",
+    response: buildTopologyResponse({
+      phip_id: TOP_OBJECT_PHIP,
+      topology,
+      key_id: "test-key-alice",
+    }),
+    expected: { signature_verifies: true, chain_walk_succeeds: true },
+  });
+}
+
+// Case 3: tampered envelope — phip_id mutated post-signing
+{
+  const topology = [topEvt0, topEvt1].map(topologyEntryFor);
+  const response = buildTopologyResponse({
+    phip_id: TOP_OBJECT_PHIP,
+    topology,
+    key_id: "test-key-alice",
+  });
+  // Mutate phip_id after signing — signature must fail.
+  response.phip_id = `phip://${TOP_AUTHORITY}/projects/widget-IMPOSTER`;
+  topologyCases.push({
+    name: "tampered-envelope",
+    description:
+      "phip_id mutated after the resolver signed the envelope. Verifiers " +
+      "reconstruct the canonical signed object from the (mutated) wire " +
+      "phip_id; the resulting JCS bytes differ from what the resolver " +
+      "signed, so the signature MUST fail.",
+    verifying_key_id: "test-key-alice",
+    response,
+    expected: { signature_verifies: false, chain_walk_succeeds: true },
+    notes:
+      "Chain walk still succeeds because the topology entries themselves " +
+      "are unmodified. The signature failure is the sole rejection signal.",
+  });
+}
+
+// Case 4: tampered chain link — entry[1].previous_hash points at the wrong event
+{
+  const topology = [topEvt0, topEvt1].map(topologyEntryFor);
+  // Mutate entry[1].previous_hash to a syntactically valid but wrong value.
+  topology[1].previous_hash =
+    "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+  topologyCases.push({
+    name: "tampered-chain-link",
+    description:
+      "entry[1].previous_hash mutated to a syntactically valid but " +
+      "incorrect sha256 value. The topology is then re-signed by the " +
+      "resolver, so the signature itself verifies — but the chain walk " +
+      "MUST reject because entry[1].previous_hash != entry[0].event_hash.",
+    verifying_key_id: "test-key-alice",
+    response: buildTopologyResponse({
+      phip_id: TOP_OBJECT_PHIP,
+      topology,
+      key_id: "test-key-alice",
+    }),
+    expected: { signature_verifies: true, chain_walk_succeeds: false },
+  });
+}
+
+// Case 5: two pages with a valid inter-page link
+{
+  const page1Topology = [topEvt0, topEvt1].map(topologyEntryFor);
+  const page2Topology = [topEvt2].map(topologyEntryFor);
+  const page1 = buildTopologyResponse({
+    phip_id: TOP_OBJECT_PHIP,
+    topology: page1Topology,
+    key_id: "test-key-alice",
+    next_cursor: "sha256:" + sha256Hex(canonicalBytes(topEvt1)),
+  });
+  const page2 = buildTopologyResponse({
+    phip_id: TOP_OBJECT_PHIP,
+    topology: page2Topology,
+    key_id: "test-key-alice",
+    next_cursor: null,
+  });
+  topologyCases.push({
+    name: "two-pages-stitchable",
+    description:
+      "Two pages of topology. Each page's signature MUST verify " +
+      "independently. The inter-page link is verified by checking " +
+      "page2.topology[0].previous_hash == page1.topology[-1].event_hash.",
+    verifying_key_id: "test-key-alice",
+    pages: [page1, page2],
+    expected: {
+      page_signatures_verify: [true, true],
+      inter_page_link_holds: true,
+    },
+  });
+}
+
+writeJson("topology/cases.json", {
+  description:
+    "Topology disclosure test vectors (Section 11.5.6). Each case shows " +
+    "a topology response document, the key whose public bytes verify the " +
+    "topology_signature, and the expected verification outcomes. " +
+    "Implementations MUST agree on signature verification and on the " +
+    "chain-walk check (entry[N].previous_hash == entry[N-1].event_hash). " +
+    "The signed object is the four-field canonical envelope " +
+    "{disclosure, page_length, phip_id, topology} — verifiers MUST " +
+    "construct that object verbatim, JCS-canonicalize, and verify " +
+    "against the resolver's public key per §11.5.6.4.",
+  cases: topologyCases,
+});
+
 console.log("\nall vectors written.");

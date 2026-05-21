@@ -32,6 +32,17 @@ All notable changes to the PhIP specification will be documented in this file.
   `?disclosure=topology` as a scope mismatch (403). Step 7 skips the
   `granted_to` actor match when `granted_to == "*"`.
 - **Appendix A.2 entry A42 (Medium)** — first post-v0.1 open item.
+- **Test vectors** at `tests/vectors/topology/cases.json` — five cases
+  (valid-multi-event, valid-single-event, tampered-envelope,
+  tampered-chain-link, two-pages-stitchable) covering signature
+  verification, the chain-walk rule, and inter-page link semantics.
+  Self-check gains 10 assertions (189 → 199).
+- **Conformance §21** in `tests/conformance/run.js` — opt-in probe that
+  skips when `/meta.disclosures` lacks `"topology"`. When advertised,
+  exercises the `?disclosure=topology` endpoint, verifies envelope
+  shape, ascending order (including `?order=desc` ignored), chain
+  walk, Cache-Control: no-store, and signature verification against
+  the resolver's resolved signing key.
 
 ### Changed
 
