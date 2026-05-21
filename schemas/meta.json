@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mfgs-us/phip/schemas/meta.json",
-  "version": "1.0",
+  "version": "1.1",
   "title": "PhIP Resolver Metadata Document",
   "description": "Schema for the resolver metadata document at /.well-known/phip/meta defined in Section 12.7. This document describes the resolver's protocol version, supported operations, conformance class, and federation state (root key, delegations, successor, mirror URLs).",
 
@@ -41,6 +41,15 @@
       "type": "object",
       "description": "Optional map describing supported filter operators, glob syntax, sort orders. Schema is open-ended.",
       "additionalProperties": true
+    },
+    "disclosures": {
+      "type": "array",
+      "description": "Optional disclosure modes this resolver honors on GET history beyond the default full-history response. Currently only 'topology' is defined (Section 11.5.6). Absence implies no disclosure modes are supported; clients SHOULD NOT probe for them.",
+      "items": {
+        "type": "string",
+        "enum": ["topology"]
+      },
+      "uniqueItems": true
     },
     "root_key": {
       "$ref": "#/$defs/phipUri",

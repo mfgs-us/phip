@@ -2,6 +2,99 @@
 
 All notable changes to the PhIP specification will be documented in this file.
 
+## [Unreleased]
+
+### Added — A42 selective history disclosure
+
+- **New §11.5.6 Topology Disclosure (optional)** — a middle ground
+  between `read_state` (current projection only) and `read_history`
+  (full event payloads). Resolvers MAY honor `?disclosure=topology` on
+  GET history to return event IDs, types, timestamps, `previous_hash`
+  links, and `event_hash` per entry — enough to attest "this object
+  exists, has chain shape X, was last touched at T" and to verify
+  chain continuity from the response alone, without revealing
+  payloads, actors, or per-event signatures.
+- **New `read_topology` capability-token scope** (§11.3.2). Grants
+  ONLY topology disclosure mode — not GET state, default GET history,
+  QUERY, or any PUSH.
+- **`granted_to` accepts the literal string `"*"`** (§11.3.1) — a
+  presenter-anonymous grant that disables the §11.5.2 step-7 actor
+  match. Intended for low-leakage scopes (notably `read_topology`)
+  and SHOULD NOT be combined with `read_history`, `read_query`, or
+  push scopes.
+- **`/meta.disclosures`** array advertises which disclosure modes the
+  resolver supports (§12.7). Only `"topology"` is defined in v0.1.
+- **`schemas/topology-response.json`** defines the response document
+  (`phip_id`, `page_length`, `disclosure`, `topology`,
+  `topology_signature`, `next_cursor`).
+- **§11.5.2 resolution order** updated to route `read_topology`
+  tokens through topology mode and to treat `read_topology` without
+  `?disclosure=topology` as a scope mismatch (403). Step 7 skips the
+  `granted_to` actor match when `granted_to == "*"`.
+- **Appendix A.2 entry A42 (Medium)** — first post-v0.1 open item.
+- **Test vectors** at `tests/vectors/topology/cases.json` — five cases
+  (valid-multi-event, valid-single-event, tampered-envelope,
+  tampered-chain-link, two-pages-stitchable) covering signature
+  verification, the chain-walk rule, and inter-page link semantics.
+  Self-check gains 10 assertions (189 → 199).
+- **Conformance §21** in `tests/conformance/run.js` — opt-in probe that
+  skips when `/meta.disclosures` lacks `"topology"`. When advertised,
+  exercises the `?disclosure=topology` endpoint, verifies envelope
+  shape, ascending order (including `?order=desc` ignored), chain
+  walk, Cache-Control: no-store, and signature verification against
+  the resolver's resolved signing key.
+
+### Changed
+
+- `schemas/capability-token.json` → 1.1: `scope` enum gains
+  `read_topology`; `granted_to` is now `oneOf [phipUri, "*"]`. MINOR
+  bump per VERSIONING.md (additive enum value, additive type
+  alternative).
+- `schemas/meta.json` → 1.1: adds optional `disclosures` field.
+
+### Order normative (topology mode only)
+
+Topology disclosure MUST return events in **ascending chain order**
+(genesis at index 0 of the first page). The `?order` query parameter
+from §12.2.1 is ignored under `?disclosure=topology`; resolvers MUST
+NOT honor `?order=desc` for a topology request. This is a hard
+requirement so the §11.5.6.4 chain-walk rule
+(`entry[N].previous_hash == entry[N-1].event_hash`) applies uniformly
+across implementations. Full GET history continues to honor `?order`
+unchanged.
+
+### Design notes
+
+Topology signature covers the JCS canonicalization of the response
+envelope `{ phip_id, page_length, disclosure, topology }` — not just
+the `topology` array — to bind the array to the object it describes
+and prevent re-attribution attacks. Each entry carries `event_hash`
+so consumers can verify chain continuity (`entry[N].previous_hash ==
+entry[N-1].event_hash`) without holding the full event payloads.
+`page_length` (not total `history_length`) is reported to avoid
+giving every reader a stable count fingerprint.
+
+Error code mapping for the new failure modes (mapped to §12.6
+existing codes — no new codes introduced):
+- Resolver doesn't advertise topology, but a `read_topology` token
+  is presented → `OPERATION_NOT_SUPPORTED` (405).
+- `read_topology` token presented to GET history WITHOUT
+  `disclosure=topology` → `INVALID_CAPABILITY` (403,
+  "scope insufficient").
+- Token defects (malformed, expired, forged signature) remain
+  `INVALID_CAPABILITY` (403) as in §11.3.4 / §11.5.2.
+
+Cache-Control: topology responses MUST be `no-store` (or
+`private, max-age=0`) — the `topology_signature` is fresh per
+response and a cached topology can't be trusted.
+
+Motivation: enables the "private design with publicly listed
+instances" composition pattern. Surfaced while implementing a
+read-only PhIP resolver in the
+[asap-pcb-dfm](https://github.com/vmc-7645/asap-pcb-dfm) pilot. See
+[mfgs-us/phip#10](https://github.com/mfgs-us/phip/pull/10) for the
+draft PR.
+
 ## [0.1.0-draft] — 2026-04-09
 
 ### Added

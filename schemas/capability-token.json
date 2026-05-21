@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mfgs-us/phip/schemas/capability-token.json",
-  "version": "1.0",
+  "version": "1.1",
   "title": "PhIP Capability Token",
   "description": "Schema for the PhIP capability token format defined in Section 11.3. Tokens are JSON objects, base64url-encoded for transport in the `Authorization: PhIP-Capability <token>` header. Cryptographic verification (signature, key resolution, scope/filter/expiry checks) is enforced by resolvers per Section 11.3.4 and is outside the scope of this schema.",
 
@@ -34,8 +34,11 @@
       "description": "PhIP URI of the actor who issued the token. MUST resolve to an `actor` object in the granting authority's namespace. Per §11.2, key resources are themselves actors, so a key URI like `phip://acme.example/keys/ops-2026` is a valid grantor."
     },
     "granted_to": {
-      "$ref": "#/$defs/phipUri",
-      "description": "PhIP URI of the actor authorized to use this token. The resolver compares against the requesting actor (when externally authenticated)."
+      "oneOf": [
+        { "$ref": "#/$defs/phipUri" },
+        { "type": "string", "const": "*" }
+      ],
+      "description": "PhIP URI of the actor authorized to use this token, OR the literal string '*' to grant the token to any presenter. '*' disables the §11.5.2 step-7 `granted_to` actor match. Issuers SHOULD restrict '*' tokens to non-write, low-leakage scopes (notably `read_topology`); issuing a `read_history` or write-scoped token with `granted_to: \"*\"` is equivalent to publishing the resource and SHOULD be rejected at policy-review time."
     },
     "scope": {
       "type": "string",
@@ -46,9 +49,10 @@
         "push_relations",
         "read_state",
         "read_history",
+        "read_topology",
         "read_query"
       ],
-      "description": "Permission level granted by this token. A single token has exactly one scope; combining scopes requires issuing multiple tokens. See Section 11.3.2."
+      "description": "Permission level granted by this token. A single token has exactly one scope; combining scopes requires issuing multiple tokens. See Section 11.3.2. `read_topology` grants access to chain topology only (event IDs, types, timestamps, previous_hash links — no payloads or actors); see Section 11.5.6."
     },
     "object_filter": {
       "type": "string",

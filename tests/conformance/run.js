@@ -436,6 +436,17 @@ async function main() {
       rMeta.headers && typeof rMeta.headers["cache-control"] === "string"
         && rMeta.headers["cache-control"].includes("max-age"),
     );
+    // If /meta.disclosures is present, it MUST be an array of strings per
+    // schemas/meta.json. A server that intends to advertise topology but
+    // mis-renders this field would otherwise silently fail the §21 skip
+    // gate without anyone noticing.
+    if ("disclosures" in rMeta.body) {
+      test(
+        "/meta.disclosures is an array of strings",
+        Array.isArray(rMeta.body.disclosures)
+          && rMeta.body.disclosures.every((d) => typeof d === "string"),
+      );
+    }
   }
 
   // ── 12. Batch CREATE — mixed outcomes → 207 ───────────────────────
@@ -1036,6 +1047,331 @@ async function main() {
     } else {
       console.log("  (skipped successor probe — /meta.successor absent)");
     }
+  }
+
+  // ── 21. Topology disclosure (§11.5.6 — OPTIONAL) ──────────────────
+  // Skips entire section if the resolver does not advertise
+  // /meta.disclosures: ["topology"]. When advertised, probes the
+  // /history endpoint with ?disclosure=topology against an object we
+  // created earlier in this run and verifies the response shape,
+  // ordering, signature mechanics, and chain-walk rule.
+  console.log(`\n[21] topology disclosure (§11.5.6, opt-in)`);
+  const supportsTopology = metaPublished
+    && Array.isArray(rMeta.body.disclosures)
+    && rMeta.body.disclosures.includes("topology");
+  if (!supportsTopology) {
+    console.log("  (skipped — /meta.disclosures does not include 'topology')");
+  } else {
+    const rTopo = await request(
+      "GET",
+      `/.well-known/phip/history/${NAMESPACE}/${OBJ_LOCAL_ID}?disclosure=topology`,
+    );
+    test("topology GET returns 200", rTopo.status === 200, `got ${rTopo.status}`);
+
+    const cacheCtl = rTopo.headers && (rTopo.headers["cache-control"] || "");
+    test(
+      "topology response sets Cache-Control: no-store (or max-age=0)",
+      typeof cacheCtl === "string"
+        && (cacheCtl.includes("no-store") || /max-age=\s*0\b/.test(cacheCtl)),
+      `got '${cacheCtl}'`,
+    );
+
+    const body = rTopo.body;
+    test("topology body has disclosure='topology'", body && body.disclosure === "topology");
+    test("topology body has phip_id matching the request", body && body.phip_id === OBJ_PHIP_ID);
+    test(
+      "topology body has page_length matching topology.length",
+      body && typeof body.page_length === "number"
+        && Array.isArray(body.topology) && body.page_length === body.topology.length,
+    );
+    test(
+      "topology entries have the five canonical fields and nothing else",
+      Array.isArray(body && body.topology)
+        && body.topology.every((e) => {
+          const ks = Object.keys(e).sort();
+          return ks.length === 5
+            && ks[0] === "event_hash"
+            && ks[1] === "event_id"
+            && ks[2] === "previous_hash"
+            && ks[3] === "timestamp"
+            && ks[4] === "type";
+        }),
+    );
+    test(
+      "topology first entry previous_hash === 'genesis' (ascending order)",
+      body && body.topology[0] && body.topology[0].previous_hash === "genesis",
+    );
+
+    // Chain walk: entry[N].previous_hash MUST equal entry[N-1].event_hash.
+    let walkOk = true;
+    for (let i = 1; body && body.topology && i < body.topology.length; i++) {
+      if (body.topology[i].previous_hash !== body.topology[i - 1].event_hash) {
+        walkOk = false;
+        break;
+      }
+    }
+    test("topology chain walk: previous_hash links match event_hashes", walkOk);
+
+    // Topology signature: covers JCS({disclosure, page_length, phip_id, topology}).
+    const sig = body && body.topology_signature;
+    test(
+      "topology_signature object present with algorithm/key_id/value",
+      sig && sig.algorithm === "Ed25519" && typeof sig.key_id === "string" && typeof sig.value === "string",
+    );
+
+    if (sig && sig.key_id) {
+      const canonicalSigned = {
+        disclosure: body.disclosure,
+        page_length: body.page_length,
+        phip_id: body.phip_id,
+        topology: body.topology,
+      };
+      const signedBytes = Buffer.from(canonicalize(canonicalSigned), "utf8");
+      const sigBytes = Buffer.from(sig.value, "base64url");
+
+      // Resolve the key_id to a public key (the resolver MUST expose it as
+      // an actor with phip:keys; §11.2.4). For the conformance probe we
+      // simply GET the actor and read its phip:keys.x.
+      const keyResolveUrl = sig.key_id.replace(/^phip:\/\/[^/]+/, "");
+      const rKey = await request("GET", `/.well-known/phip/resolve${keyResolveUrl}`);
+      const x = rKey.body
+        && rKey.body.attributes
+        && rKey.body.attributes["phip:keys"]
+        && rKey.body.attributes["phip:keys"].x;
+      if (!x) {
+        test(
+          "topology signing key resolves and exposes phip:keys.x",
+          false,
+          `could not resolve ${sig.key_id}`,
+        );
+      } else {
+        const rawPub = Buffer.from(x, "base64url");
+        const spki = Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), rawPub]);
+        const pubKey = crypto.createPublicKey({ key: spki, format: "der", type: "spki" });
+        const verified = crypto.verify(null, signedBytes, pubKey, sigBytes);
+        test("topology_signature verifies against resolved key", verified);
+      }
+    }
+
+    // ?order=desc MUST be ignored in topology mode (§11.5.6.5).
+    const rDesc = await request(
+      "GET",
+      `/.well-known/phip/history/${NAMESPACE}/${OBJ_LOCAL_ID}?disclosure=topology&order=desc`,
+    );
+    test(
+      "topology ignores ?order=desc (still ascending)",
+      rDesc.status === 200
+        && rDesc.body && rDesc.body.topology
+        && rDesc.body.topology[0] && rDesc.body.topology[0].previous_hash === "genesis",
+    );
+
+    // ── 21b. Token-path probes against a restricted object ─────────────
+    // Up to this point §21 has exercised topology shape against a public
+    // object. The spec's gating rules — read_topology scope coverage,
+    // granted_to: "*" handling, INVALID_CAPABILITY for missing
+    // ?disclosure=topology, MISSING_CAPABILITY for absent token — only
+    // fire on restricted objects, so we create one here and exercise
+    // each path explicitly.
+    console.log(`  -- restricted-object token paths --`);
+
+    const TOPO_RESTRICTED_LOCAL = `units/topo-restricted-${RUN_ID}`;
+    const TOPO_RESTRICTED_PHIP = `phip://${AUTHORITY}/${NAMESPACE}/${TOPO_RESTRICTED_LOCAL}`;
+
+    const restrictedEvt0 = signEvent({
+      event_id: newEventId(),
+      phip_id: TOPO_RESTRICTED_PHIP,
+      type: "created",
+      timestamp: new Date().toISOString(),
+      actor: KEY_PHIP_ID,
+      previous_hash: "genesis",
+      payload: {
+        object_type: "design",
+        state: "design",
+        attributes: { "phip:access": { policy: "capability" } },
+      },
+    }, KEY_PHIP_ID);
+    await request("POST", OBJECTS(NAMESPACE), restrictedEvt0);
+
+    const restrictedEvt1 = signEvent({
+      event_id: newEventId(),
+      phip_id: TOPO_RESTRICTED_PHIP,
+      type: "state_transition",
+      timestamp: new Date().toISOString(),
+      actor: KEY_PHIP_ID,
+      previous_hash: hashEvent(restrictedEvt0),
+      payload: { from: "design", to: "qualified" },
+    }, KEY_PHIP_ID);
+    await request("POST", PUSH(NAMESPACE, TOPO_RESTRICTED_LOCAL), restrictedEvt1);
+
+    function mintTopoToken({ scope, granted_to, object_filter }) {
+      const t = {
+        phip_capability: "1.0",
+        token_id: newEventId(),
+        granted_by: KEY_PHIP_ID,
+        granted_to,
+        scope,
+        object_filter,
+        not_before: "2026-01-01T00:00:00Z",
+        expires: "2099-01-01T00:00:00Z",
+      };
+      const sig = crypto.sign(null, canonicalBytes(t), privateKey);
+      t.signature = {
+        algorithm: "Ed25519",
+        key_id: KEY_PHIP_ID,
+        value: sig.toString("base64url"),
+      };
+      return Buffer.from(JSON.stringify(t), "utf8").toString("base64url");
+    }
+
+    const topoStarToken = mintTopoToken({
+      scope: "read_topology",
+      granted_to: "*",
+      object_filter: TOPO_RESTRICTED_PHIP,
+    });
+
+    // Path A: read_topology + ?disclosure=topology → 200 with a
+    // well-formed, signed, chain-verifiable topology body. We re-run
+    // the same shape + signature + chain checks as the public-object
+    // probe above so the gated path is exercised at equal rigor.
+    const rPathA = await request(
+      "GET",
+      `/.well-known/phip/history/${NAMESPACE}/${TOPO_RESTRICTED_LOCAL}?disclosure=topology`,
+      null,
+      { Authorization: `PhIP-Capability ${topoStarToken}` },
+    );
+    test(
+      "topology+capability: read_topology '*' + ?disclosure=topology returns 200",
+      rPathA.status === 200,
+      `got ${rPathA.status}`,
+    );
+
+    const bodyA = rPathA.body;
+    test(
+      "topology+capability: response body is topology mode with matching phip_id",
+      bodyA && bodyA.disclosure === "topology" && bodyA.phip_id === TOPO_RESTRICTED_PHIP,
+    );
+    test(
+      "topology+capability: page_length matches topology.length",
+      bodyA && typeof bodyA.page_length === "number"
+        && Array.isArray(bodyA.topology) && bodyA.page_length === bodyA.topology.length,
+    );
+    test(
+      "topology+capability: first entry previous_hash === 'genesis'",
+      bodyA && bodyA.topology[0] && bodyA.topology[0].previous_hash === "genesis",
+    );
+    test(
+      "topology+capability: entries have exactly the five canonical fields",
+      Array.isArray(bodyA && bodyA.topology)
+        && bodyA.topology.every((e) => {
+          const ks = Object.keys(e).sort();
+          return ks.length === 5
+            && ks[0] === "event_hash"
+            && ks[1] === "event_id"
+            && ks[2] === "previous_hash"
+            && ks[3] === "timestamp"
+            && ks[4] === "type";
+        }),
+    );
+
+    // Chain walk on the restricted object.
+    let walkOkA = true;
+    for (let i = 1; bodyA && bodyA.topology && i < bodyA.topology.length; i++) {
+      if (bodyA.topology[i].previous_hash !== bodyA.topology[i - 1].event_hash) {
+        walkOkA = false;
+        break;
+      }
+    }
+    test("topology+capability: chain walk holds", walkOkA);
+
+    // Signature verification on the restricted object.
+    const sigA = bodyA && bodyA.topology_signature;
+    test(
+      "topology+capability: topology_signature object well-formed",
+      sigA && sigA.algorithm === "Ed25519" && typeof sigA.key_id === "string" && typeof sigA.value === "string",
+    );
+    if (sigA && sigA.key_id) {
+      const canonicalSignedA = {
+        disclosure: bodyA.disclosure,
+        page_length: bodyA.page_length,
+        phip_id: bodyA.phip_id,
+        topology: bodyA.topology,
+      };
+      const signedBytesA = Buffer.from(canonicalize(canonicalSignedA), "utf8");
+      const sigBytesA = Buffer.from(sigA.value, "base64url");
+      const keyResolveUrlA = sigA.key_id.replace(/^phip:\/\/[^/]+/, "");
+      const rKeyA = await request("GET", `/.well-known/phip/resolve${keyResolveUrlA}`);
+      const xA = rKeyA.body
+        && rKeyA.body.attributes
+        && rKeyA.body.attributes["phip:keys"]
+        && rKeyA.body.attributes["phip:keys"].x;
+      if (!xA) {
+        test(
+          "topology+capability: signing key resolves and exposes phip:keys.x",
+          false,
+          `could not resolve ${sigA.key_id}`,
+        );
+      } else {
+        const rawPubA = Buffer.from(xA, "base64url");
+        const spkiA = Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), rawPubA]);
+        const pubKeyA = crypto.createPublicKey({ key: spkiA, format: "der", type: "spki" });
+        const verifiedA = crypto.verify(null, signedBytesA, pubKeyA, sigBytesA);
+        test("topology+capability: topology_signature verifies", verifiedA);
+      }
+    }
+
+    // Path B: read_topology WITHOUT ?disclosure=topology → 403 INVALID_CAPABILITY.
+    const rPathB = await request(
+      "GET",
+      `/.well-known/phip/history/${NAMESPACE}/${TOPO_RESTRICTED_LOCAL}`,
+      null,
+      { Authorization: `PhIP-Capability ${topoStarToken}` },
+    );
+    test(
+      "topology+capability: read_topology without ?disclosure returns 403",
+      rPathB.status === 403,
+      `got ${rPathB.status}`,
+    );
+    test(
+      "topology+capability: error code is INVALID_CAPABILITY",
+      rPathB.body && rPathB.body.error
+        && rPathB.body.error.code === "INVALID_CAPABILITY",
+    );
+
+    // Path C: no token + ?disclosure=topology on a capability-policy object
+    // → 403 MISSING_CAPABILITY (§11.5.2 step 3).
+    const rPathC = await request(
+      "GET",
+      `/.well-known/phip/history/${NAMESPACE}/${TOPO_RESTRICTED_LOCAL}?disclosure=topology`,
+    );
+    test(
+      "topology+capability: no token returns 403",
+      rPathC.status === 403,
+      `got ${rPathC.status}`,
+    );
+    test(
+      "topology+capability: error code is MISSING_CAPABILITY",
+      rPathC.body && rPathC.body.error
+        && rPathC.body.error.code === "MISSING_CAPABILITY",
+    );
+
+    // Path D: read_topology on GET state (no history endpoint) → 403
+    // INVALID_CAPABILITY (scope-insufficient per §11.5.2 step 5).
+    const rPathD = await request(
+      "GET",
+      RESOLVE(NAMESPACE, TOPO_RESTRICTED_LOCAL),
+      null,
+      { Authorization: `PhIP-Capability ${topoStarToken}` },
+    );
+    test(
+      "topology+capability: read_topology on GET state returns 403",
+      rPathD.status === 403,
+      `got ${rPathD.status}`,
+    );
+    test(
+      "topology+capability: GET state error code is INVALID_CAPABILITY",
+      rPathD.body && rPathD.body.error
+        && rPathD.body.error.code === "INVALID_CAPABILITY",
+    );
   }
 
   // ── summary ───────────────────────────────────────────────────────
