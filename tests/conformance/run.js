@@ -1154,13 +1154,140 @@ async function main() {
         && rDesc.body.topology[0] && rDesc.body.topology[0].previous_hash === "genesis",
     );
 
-    // read_history token without ?disclosure=topology returns full history.
-    // (Bare GET history is already tested earlier; here we just confirm
-    // adding the param against a non-restricted object also yields topology.)
+    // ── 21b. Token-path probes against a restricted object ─────────────
+    // Up to this point §21 has exercised topology shape against a public
+    // object. The spec's gating rules — read_topology scope coverage,
+    // granted_to: "*" handling, INVALID_CAPABILITY for missing
+    // ?disclosure=topology, MISSING_CAPABILITY for absent token — only
+    // fire on restricted objects, so we create one here and exercise
+    // each path explicitly.
+    console.log(`  -- restricted-object token paths --`);
 
-    // Untokened request: still topology (object is public in our test run).
-    // But §11.5.6 grants this implicitly through normal /history access.
-    // No additional assertion — the first GET above covered it.
+    const TOPO_RESTRICTED_LOCAL = `units/topo-restricted-${RUN_ID}`;
+    const TOPO_RESTRICTED_PHIP = `phip://${AUTHORITY}/${NAMESPACE}/${TOPO_RESTRICTED_LOCAL}`;
+
+    const restrictedEvt0 = signEvent({
+      event_id: newEventId(),
+      phip_id: TOPO_RESTRICTED_PHIP,
+      type: "created",
+      timestamp: new Date().toISOString(),
+      actor: KEY_PHIP_ID,
+      previous_hash: "genesis",
+      payload: {
+        object_type: "design",
+        state: "design",
+        attributes: { "phip:access": { policy: "capability" } },
+      },
+    }, KEY_PHIP_ID);
+    await request("POST", OBJECTS(NAMESPACE), restrictedEvt0);
+
+    const restrictedEvt1 = signEvent({
+      event_id: newEventId(),
+      phip_id: TOPO_RESTRICTED_PHIP,
+      type: "state_transition",
+      timestamp: new Date().toISOString(),
+      actor: KEY_PHIP_ID,
+      previous_hash: hashEvent(restrictedEvt0),
+      payload: { from: "design", to: "qualified" },
+    }, KEY_PHIP_ID);
+    await request("POST", PUSH(NAMESPACE, TOPO_RESTRICTED_LOCAL), restrictedEvt1);
+
+    function mintTopoToken({ scope, granted_to, object_filter }) {
+      const t = {
+        phip_capability: "1.0",
+        token_id: newEventId(),
+        granted_by: KEY_PHIP_ID,
+        granted_to,
+        scope,
+        object_filter,
+        not_before: "2026-01-01T00:00:00Z",
+        expires: "2099-01-01T00:00:00Z",
+      };
+      const sig = crypto.sign(null, canonicalBytes(t), privateKey);
+      t.signature = {
+        algorithm: "Ed25519",
+        key_id: KEY_PHIP_ID,
+        value: sig.toString("base64url"),
+      };
+      return Buffer.from(JSON.stringify(t), "utf8").toString("base64url");
+    }
+
+    const topoStarToken = mintTopoToken({
+      scope: "read_topology",
+      granted_to: "*",
+      object_filter: TOPO_RESTRICTED_PHIP,
+    });
+
+    // Path A: read_topology + ?disclosure=topology → 200 with topology body.
+    const rPathA = await request(
+      "GET",
+      `/.well-known/phip/history/${NAMESPACE}/${TOPO_RESTRICTED_LOCAL}?disclosure=topology`,
+      null,
+      { Authorization: `PhIP-Capability ${topoStarToken}` },
+    );
+    test(
+      "topology+capability: read_topology '*' + ?disclosure=topology returns 200",
+      rPathA.status === 200,
+      `got ${rPathA.status}`,
+    );
+    test(
+      "topology+capability: response body is topology mode",
+      rPathA.body && rPathA.body.disclosure === "topology",
+    );
+
+    // Path B: read_topology WITHOUT ?disclosure=topology → 403 INVALID_CAPABILITY.
+    const rPathB = await request(
+      "GET",
+      `/.well-known/phip/history/${NAMESPACE}/${TOPO_RESTRICTED_LOCAL}`,
+      null,
+      { Authorization: `PhIP-Capability ${topoStarToken}` },
+    );
+    test(
+      "topology+capability: read_topology without ?disclosure returns 403",
+      rPathB.status === 403,
+      `got ${rPathB.status}`,
+    );
+    test(
+      "topology+capability: error code is INVALID_CAPABILITY",
+      rPathB.body && rPathB.body.error
+        && rPathB.body.error.code === "INVALID_CAPABILITY",
+    );
+
+    // Path C: no token + ?disclosure=topology on a capability-policy object
+    // → 403 MISSING_CAPABILITY (§11.5.2 step 3).
+    const rPathC = await request(
+      "GET",
+      `/.well-known/phip/history/${NAMESPACE}/${TOPO_RESTRICTED_LOCAL}?disclosure=topology`,
+    );
+    test(
+      "topology+capability: no token returns 403",
+      rPathC.status === 403,
+      `got ${rPathC.status}`,
+    );
+    test(
+      "topology+capability: error code is MISSING_CAPABILITY",
+      rPathC.body && rPathC.body.error
+        && rPathC.body.error.code === "MISSING_CAPABILITY",
+    );
+
+    // Path D: read_topology on GET state (no history endpoint) → 403
+    // INVALID_CAPABILITY (scope-insufficient per §11.5.2 step 5).
+    const rPathD = await request(
+      "GET",
+      RESOLVE(NAMESPACE, TOPO_RESTRICTED_LOCAL),
+      null,
+      { Authorization: `PhIP-Capability ${topoStarToken}` },
+    );
+    test(
+      "topology+capability: read_topology on GET state returns 403",
+      rPathD.status === 403,
+      `got ${rPathD.status}`,
+    );
+    test(
+      "topology+capability: GET state error code is INVALID_CAPABILITY",
+      rPathD.body && rPathD.body.error
+        && rPathD.body.error.code === "INVALID_CAPABILITY",
+    );
   }
 
   // ── summary ───────────────────────────────────────────────────────

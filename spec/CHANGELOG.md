@@ -52,6 +52,17 @@ All notable changes to the PhIP specification will be documented in this file.
   alternative).
 - `schemas/meta.json` → 1.1: adds optional `disclosures` field.
 
+### Order normative (topology mode only)
+
+Topology disclosure MUST return events in **ascending chain order**
+(genesis at index 0 of the first page). The `?order` query parameter
+from §12.2.1 is ignored under `?disclosure=topology`; resolvers MUST
+NOT honor `?order=desc` for a topology request. This is a hard
+requirement so the §11.5.6.4 chain-walk rule
+(`entry[N].previous_hash == entry[N-1].event_hash`) applies uniformly
+across implementations. Full GET history continues to honor `?order`
+unchanged.
+
 ### Design notes
 
 Topology signature covers the JCS canonicalization of the response

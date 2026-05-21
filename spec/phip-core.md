@@ -2510,6 +2510,18 @@ Topology mode is selective disclosure, not anonymization:
   SHOULD substitute `"redacted"` for `type` when the type taxonomy
   itself is information they wish to withhold.
 
+##### 11.5.6.8 Reference Material
+
+- Canonical wire bytes and verification expectations:
+  `tests/vectors/topology/cases.json` — five fixtures covering
+  signature verification, chain walk, envelope tampering, chain-link
+  tampering, and inter-page stitching.
+- HTTP-level conformance assertions: `tests/conformance/run.js` §21,
+  covering response shape on a public object plus token-gated
+  paths on a restricted object (read_topology + `?disclosure=topology`,
+  missing disclosure parameter, missing token, scope-insufficient
+  GET state).
+
 ### 11.6 Caller Authentication
 
 Capability tokens (Section 11.3) declare *what* an actor is permitted 

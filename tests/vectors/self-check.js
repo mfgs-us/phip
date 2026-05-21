@@ -380,6 +380,13 @@ console.log("\n[topology]");
           && sigResults[1] === c.expected.page_signatures_verify[1],
         `topology ${c.name} per-page signatures match expected`,
       );
+      // In-page chain walks (each page independently honors the
+      // entry[N].previous_hash == entry[N-1].event_hash rule).
+      const perPageWalks = c.pages.map((p) => walkChain(p.topology));
+      assert(
+        perPageWalks.every((ok) => ok === true),
+        `topology ${c.name} in-page chain walks succeed on every page`,
+      );
       const interOk =
         c.pages[1].topology[0].previous_hash
         === c.pages[0].topology[c.pages[0].topology.length - 1].event_hash;
