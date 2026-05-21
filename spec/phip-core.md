@@ -1916,6 +1916,7 @@ any object whose `phip_id` starts with that prefix.
 | `push_relations` | Append `relation_added` and `relation_removed` events only |
 | `read_state` | Read object projection via GET (no history) |
 | `read_history` | Read object projection AND full event history |
+| `read_topology` | Read chain topology (event IDs, types, timestamps, `previous_hash` links) of an object's history, without payloads, actors, or per-event signatures. See §11.5.6 |
 | `read_query` | Match objects via QUERY |
 
 A token with `push_events` scope is a broad grant. The narrower scopes 
@@ -2174,7 +2175,9 @@ order:
    11.3.4 steps 1–4.
 5. Verify the token's `scope` covers the requested operation:
    - GET requires `read_state` or `read_history`
-   - GET history requires `read_history`
+   - GET history requires `read_history`, OR `read_topology` if the
+     resolver supports topology disclosure (§11.5.6) and the caller has
+     explicitly requested topology mode
    - QUERY requires `read_query`
 6. Verify the token's `object_filter` matches the target `phip_id`. For 
    QUERY, the filter restricts which objects can be returned in the 
@@ -2216,6 +2219,147 @@ discovery for regulatory disclosures, safety certifications, and
 provenance claims that are intended to be verifiable by any party. 
 Authorities that hold commercially sensitive data MUST attach 
 `phip:access` explicitly — silence is consent.
+
+#### 11.5.6 Topology Disclosure (Optional)
+
+`read_state` exposes the current projection, `read_history` exposes every
+event in full. There is a real gap between them: an authority may want to
+publish that an object exists, has a chain of N events, and was last
+modified at time T, *without* revealing the contents of those events. The
+canonical use case is a private design with publicly listed instances —
+the instance object holds a public `instance_of` relation pointing at the
+design, and external parties want to confirm the design exists and is
+under active stewardship without seeing its payloads.
+
+The `read_topology` scope (§11.3.2) and this subsection define an
+optional disclosure mode that fills this gap.
+
+##### 11.5.6.1 Scope and Limits
+
+Topology disclosure is OPTIONAL. A resolver advertises support by
+including `read_topology` in the scopes it issues tokens for; absence
+implies no support. A resolver that does not implement topology mode
+MUST reject `read_topology` tokens with `INVALID_CAPABILITY` (403).
+
+Topology mode is read-only and applies only to GET history requests
+(§12.2.1). It does not apply to GET state, QUERY, or any PUSH operation.
+
+##### 11.5.6.2 Requesting Topology
+
+A caller holding a `read_topology` token requests topology mode by
+appending `?disclosure=topology` to the GET history URL:
+
+```
+GET https://{authority}/.well-known/phip/history/{namespace}/{local-id}
+    ?disclosure=topology
+Authorization: PhIP-Capability <token>
+```
+
+A caller holding `read_history` MAY also request `disclosure=topology`,
+in which case the resolver MUST honor it and return the topology shape.
+This lets clients that don't need payload contents reduce bandwidth.
+
+Absent the `disclosure` parameter, the resolver returns the full history
+form (§12.2.1) when the caller's scope permits.
+
+##### 11.5.6.3 Topology Response Shape
+
+```json
+{
+  "phip_id": "phip://acme.example/projects/widget-v3",
+  "history_length": 12,
+  "disclosure": "topology",
+  "topology": [
+    {
+      "event_id": "evt-...",
+      "type": "created",
+      "timestamp": "2026-01-15T09:00:00Z",
+      "previous_hash": "genesis"
+    },
+    {
+      "event_id": "evt-...",
+      "type": "attribute_update",
+      "timestamp": "2026-01-22T14:30:00Z",
+      "previous_hash": "sha256:..."
+    }
+  ],
+  "topology_signature": {
+    "algorithm": "Ed25519",
+    "key_id": "phip://acme.example/keys/resolver-2026",
+    "value": "base64url:..."
+  },
+  "next_cursor": null
+}
+```
+
+Each topology entry MUST contain exactly these four fields:
+
+| Field | Source |
+|---|---|
+| `event_id` | Verbatim from the underlying full event |
+| `type` | Verbatim event type. An authority MAY substitute the literal string `"redacted"` if the type itself is sensitive |
+| `timestamp` | Verbatim from the underlying full event |
+| `previous_hash` | Verbatim from the underlying full event |
+
+The `payload`, `actor`, and per-event `signature` fields MUST NOT appear
+in topology mode.
+
+##### 11.5.6.4 Topology Signature
+
+The `topology_signature` covers the JCS canonicalization of the
+`topology` array. The `key_id` MUST be a key resource (§11.2) of the
+authority serving the resolver. Verification:
+
+1. Resolve `key_id` to the public key (§11.2).
+2. JCS-encode the `topology` array verbatim.
+3. Verify the Ed25519 signature against those bytes.
+
+The topology signature attests that the resolver, acting for the
+authority, observed a chain with exactly this shape at the time of the
+response. It does NOT attest to chain integrity end-to-end — that
+requires `read_history` and per-event signature verification.
+
+A resolver MUST sign the topology fresh for each response; topology
+signatures MUST NOT be cached across calls, because pagination cursors
+and `not_before`/`expires` windows may change the visible slice.
+
+##### 11.5.6.5 Pagination
+
+Topology mode honors the same `limit` and `cursor` parameters as full
+history (§12.2.1). The `topology_signature` covers only the events in
+the current page; consumers stitching paginated topology MUST verify
+each page's signature independently.
+
+##### 11.5.6.6 Cross-Authority Composition
+
+Topology mode is the recommended way to publicly attest that a
+restricted object exists without exposing its contents. The typical
+composition:
+
+- A `design` object at `phip://acme.example/projects/widget-v3` has
+  `phip:access.policy = capability`.
+- The authority pre-issues a long-lived `read_topology` token granted
+  to the wildcard actor `phip://*/actor/*` (no `granted_to` restriction
+  beyond presence of the token) and publishes the token alongside the
+  authority record.
+- An `assembly` object instance of that design is public; downstream
+  readers resolving the assembly can follow the `instance_of` relation
+  to the design URI, present the public topology token, and confirm
+  the design's lifecycle shape without seeing payloads.
+
+Authorities that do not wish to publicly attest topology can simply not
+issue `read_topology` tokens for the restricted object; the existing
+`ACCESS_DENIED` (403) behavior is unchanged.
+
+##### 11.5.6.7 What Topology Does Not Protect
+
+Topology mode is selective disclosure, not anonymization:
+
+- Event count, event types, and timestamps are revealed. Inference
+  from those alone may be material — e.g., a burst of measurement
+  events at hour H may correlate with a known production incident.
+- Authorities that consider timing or event-type cadence sensitive
+  SHOULD NOT issue `read_topology` tokens for those objects.
 
 ### 11.6 Caller Authentication
 
@@ -3402,8 +3546,9 @@ Issues identified through scenario stress-testing and systematic review.
 
 ### A.2 Open Issues — Post-v0.1
 
-All issues identified through v0.1 stress-testing are resolved. Future 
-revisions will add issues as they surface.
+| # | Issue | Severity | Notes |
+|---|---|---|---|
+| A42 | Selective history disclosure | Medium | `read_state` and `read_history` are the only read scopes on history. There is no middle ground for "this object exists, has chain shape X, was last touched at T" without exposing payloads. Surfaces in the "private design with publicly listed instances" pattern: a public `assembly` `instance_of` a private `design`; downstream readers want to confirm the design's chain shape without seeing its contents. Proposed: optional topology disclosure mode (§11.5.6) with new `read_topology` scope. |
 
 ---
 

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mfgs-us/phip/schemas/capability-token.json",
-  "version": "1.0",
+  "version": "1.1",
   "title": "PhIP Capability Token",
   "description": "Schema for the PhIP capability token format defined in Section 11.3. Tokens are JSON objects, base64url-encoded for transport in the `Authorization: PhIP-Capability <token>` header. Cryptographic verification (signature, key resolution, scope/filter/expiry checks) is enforced by resolvers per Section 11.3.4 and is outside the scope of this schema.",
 
@@ -46,9 +46,10 @@
         "push_relations",
         "read_state",
         "read_history",
+        "read_topology",
         "read_query"
       ],
-      "description": "Permission level granted by this token. A single token has exactly one scope; combining scopes requires issuing multiple tokens. See Section 11.3.2."
+      "description": "Permission level granted by this token. A single token has exactly one scope; combining scopes requires issuing multiple tokens. See Section 11.3.2. `read_topology` grants access to chain topology only (event IDs, types, timestamps, previous_hash links — no payloads or actors); see Section 11.5.6."
     },
     "object_filter": {
       "type": "string",

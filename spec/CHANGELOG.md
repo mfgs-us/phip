@@ -2,6 +2,34 @@
 
 All notable changes to the PhIP specification will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- New §11.5.6 Topology Disclosure (optional): a middle ground between
+  `read_state` (current projection only) and `read_history` (full event
+  payloads). Resolvers MAY honor `?disclosure=topology` on GET history
+  to return event IDs, types, timestamps, and `previous_hash` links —
+  enough to attest that an object exists and has been modified along a
+  particular chain shape, without revealing payloads, actors, or
+  per-event signatures. The whole topology array is signed once by the
+  resolver's authority key.
+- New `read_topology` capability-token scope (§11.3.2,
+  `schemas/capability-token.json` bumped to 1.1).
+- §11.5.2 resolution order updated to route `read_topology` tokens
+  through topology mode.
+- Appendix A.2 entry A42 (Medium): selective history disclosure.
+
+Motivation: enables the "private design with publicly listed instances"
+composition pattern. An external party resolving a public `assembly`
+that `instance_of`s a private `design` can confirm the design exists
+and is under active stewardship without seeing its payloads, by
+presenting a `read_topology` token published alongside the authority
+record.
+
+Surfaced while implementing a read-only PhIP resolver in the
+[asap-pcb-dfm](https://github.com/vmc-7645/asap-pcb-dfm) pilot. See
+PR-link-here for proposal text, schema update, and Appendix A entry.
+
 ## [0.1.0-draft] — 2026-04-09
 
 ### Added
