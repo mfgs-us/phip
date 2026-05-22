@@ -57,8 +57,10 @@ All notable changes to the PhIP specification will be documented in this file.
 Topology disclosure MUST return events in **ascending chain order**
 (genesis at index 0 of the first page). The `?order` query parameter
 from §12.2.1 is ignored under `?disclosure=topology`; resolvers MUST
-NOT honor `?order=desc` for a topology request. This is a hard
-requirement so the §11.5.6.4 chain-walk rule
+silently ignore `?order=desc` and serve the canonical ascending
+response. Resolvers MUST NOT reject the request (e.g. with `400
+INVALID_QUERY`) on the basis of an incompatible `?order` value. This
+is a hard requirement so the §11.5.6.4 chain-walk rule
 (`entry[N].previous_hash == entry[N-1].event_hash`) applies uniformly
 across implementations. Full GET history continues to honor `?order`
 unchanged.

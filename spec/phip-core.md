@@ -2460,7 +2460,12 @@ the stitched chain is contiguous.
 Topology mode MUST return events in ascending chain order — oldest
 first, genesis at index 0 of the first page. The `?order` query
 parameter from §12.2.1 is ignored in topology mode; resolvers MUST
-NOT honor `?order=desc` for a `?disclosure=topology` request.
+silently ignore `?order=desc` for a `?disclosure=topology` request
+and serve the canonical ascending response. Resolvers MUST NOT reject
+the request (e.g. with `400 INVALID_QUERY`) on the basis of an
+incompatible `?order` value — the parameter is honored only outside
+topology mode.
+
 Ascending order is mandatory so the §11.5.6.4 chain-walk check
 (`entry[N].previous_hash == entry[N-1].event_hash`) applies
 uniformly; a descending topology would invert the check, requiring
