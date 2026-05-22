@@ -38,6 +38,28 @@ phip-conformance http://127.0.0.1:8080 --authority acme.example
 * `--namespace` — the namespace to create objects under. Defaults to
   `conformance`.
 
+### Running against token-protected deployments
+
+Resolvers configured with a write token (e.g. `phip-server`'s
+`PHIP_WRITE_TOKEN`) reject every write without `Authorization: Bearer
+<token>`. Pass the same value via the `PHIP_WRITE_TOKEN` env var and the
+suite will inject it on every POST/PUT/PATCH/DELETE:
+
+```
+PHIP_WRITE_TOKEN=… phip-conformance https://resolver.example --authority resolver.example
+```
+
+The §18 capability-token probes use their own `Authorization` headers and
+take precedence over the bearer — they continue to exercise the
+`phip:access` enforcement path even when a write token is set.
+
+> **Security note**: passing the token on the command line makes it
+> visible in `ps auxe` to any local user on the same machine. For
+> sensitive deployments, write it to a file with restrictive
+> permissions and `export PHIP_WRITE_TOKEN=$(<token.txt)` before
+> running the suite, or set it via your shell profile / direnv with
+> `chmod 600` on the source file.
+
 Each run generates a fresh 8-character run-id and suffixes every object id
 with it, so the suite can be executed repeatedly against the same server
 without CREATE collisions.
