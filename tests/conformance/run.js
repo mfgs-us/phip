@@ -113,17 +113,26 @@ function newEventId() {
 
 // ── HTTP client ──────────────────────────────────────────────────────
 
+// Resolvers configured with PHIP_WRITE_TOKEN require a bearer on every
+// write. Pull the token from the same env var so this suite can run
+// against deployments that aren't open writes. Suite-managed Authorization
+// (e.g. the §18 capability tokens) takes precedence — those overrides
+// flow through `extraHeaders`.
+const WRITE_TOKEN = process.env.PHIP_WRITE_TOKEN || null;
+const _isWrite = (m) => m === "POST" || m === "PUT" || m === "PATCH" || m === "DELETE";
+
 function request(method, relPath, body, extraHeaders) {
   return new Promise((resolve, reject) => {
     const url = new URL(BASE_URL + relPath);
     const payload = body ? Buffer.from(JSON.stringify(body), "utf8") : null;
     const lib = url.protocol === "https:" ? https : http;
-    const headers = Object.assign(
-      payload
-        ? { "Content-Type": "application/json", "Content-Length": payload.length }
-        : {},
-      extraHeaders || {},
-    );
+    const baseHeaders = payload
+      ? { "Content-Type": "application/json", "Content-Length": payload.length }
+      : {};
+    if (WRITE_TOKEN && _isWrite(method) && !(extraHeaders && extraHeaders.Authorization)) {
+      baseHeaders["Authorization"] = `Bearer ${WRITE_TOKEN}`;
+    }
+    const headers = Object.assign(baseHeaders, extraHeaders || {});
     const opts = {
       hostname: url.hostname,
       port: url.port || (url.protocol === "https:" ? 443 : 80),
