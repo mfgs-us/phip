@@ -53,6 +53,13 @@ The §18 capability-token probes use their own `Authorization` headers and
 take precedence over the bearer — they continue to exercise the
 `phip:access` enforcement path even when a write token is set.
 
+> **Security note**: passing the token on the command line makes it
+> visible in `ps auxe` to any local user on the same machine. For
+> sensitive deployments, write it to a file with restrictive
+> permissions and `export PHIP_WRITE_TOKEN=$(<token.txt)` before
+> running the suite, or set it via your shell profile / direnv with
+> `chmod 600` on the source file.
+
 Each run generates a fresh 8-character run-id and suffixes every object id
 with it, so the suite can be executed repeatedly against the same server
 without CREATE collisions.

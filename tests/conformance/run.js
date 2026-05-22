@@ -121,6 +121,14 @@ function newEventId() {
 const WRITE_TOKEN = process.env.PHIP_WRITE_TOKEN || null;
 const _isWrite = (m) => m === "POST" || m === "PUT" || m === "PATCH" || m === "DELETE";
 
+function _hasAuthHeader(extra) {
+  if (!extra) return false;
+  // HTTP headers are case-insensitive; JS object keys aren't. Probe
+  // for any casing of "authorization" so a suite-managed override
+  // (lowercase or mixed-case) isn't shadowed by our bearer injection.
+  return Object.keys(extra).some((k) => k.toLowerCase() === "authorization");
+}
+
 function request(method, relPath, body, extraHeaders) {
   return new Promise((resolve, reject) => {
     const url = new URL(BASE_URL + relPath);
@@ -129,7 +137,7 @@ function request(method, relPath, body, extraHeaders) {
     const baseHeaders = payload
       ? { "Content-Type": "application/json", "Content-Length": payload.length }
       : {};
-    if (WRITE_TOKEN && _isWrite(method) && !(extraHeaders && extraHeaders.Authorization)) {
+    if (WRITE_TOKEN && _isWrite(method) && !_hasAuthHeader(extraHeaders)) {
       baseHeaders["Authorization"] = `Bearer ${WRITE_TOKEN}`;
     }
     const headers = Object.assign(baseHeaders, extraHeaders || {});
