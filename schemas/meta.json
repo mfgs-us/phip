@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mfgs-us/phip/schemas/meta.json",
-  "version": "1.1",
+  "version": "1.2",
   "title": "PhIP Resolver Metadata Document",
   "description": "Schema for the resolver metadata document at /.well-known/phip/meta defined in Section 12.7. This document describes the resolver's protocol version, supported operations, conformance class, and federation state (root key, delegations, successor, mirror URLs).",
 
@@ -25,9 +25,24 @@
     },
     "schema_namespaces": {
       "type": "array",
+      "description": "Supported attribute namespaces (Section 8.4.5). Each entry is either a string (optionally with @-prefixed semver, e.g. 'phip:mechanical@1.2'; a bare name means 'latest supported') or an object declaring an explicit version range.",
       "items": {
-        "type": "string",
-        "description": "Schema namespace identifier, optionally with @-prefixed semver (e.g. 'phip:mechanical@1.2'). Bare names mean 'latest supported'."
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "Schema namespace identifier, optionally with @-prefixed semver (e.g. 'phip:mechanical@1.2'). Bare names mean 'latest supported'."
+          },
+          {
+            "type": "object",
+            "required": ["namespace"],
+            "additionalProperties": true,
+            "properties": {
+              "namespace": { "type": "string" },
+              "min": { "type": "string", "description": "Lowest MAJOR.MINOR supported." },
+              "max": { "type": "string", "description": "Highest MAJOR.MINOR supported." }
+            }
+          }
+        ]
       }
     },
     "supported_operations": {
@@ -62,20 +77,14 @@
     },
     "successor": {
       "type": "object",
-      "required": ["authority", "namespaces", "transfer_event_id"],
+      "required": ["authority", "transfer_event_id", "effective_from"],
       "additionalProperties": true,
-      "description": "Present iff this authority has been transferred (Section 4.6.2). Clients SHOULD redirect subsequent requests to the successor.",
+      "description": "Present iff this authority has been transferred (Section 12.7). Shape: { authority, transfer_event_id, effective_from }. Clients SHOULD redirect subsequent requests to the successor. The transferred namespaces are carried by the authority_transfer event itself (Section 4.6.2), not repeated here.",
       "properties": {
         "authority": {
           "type": "string",
           "pattern": "^[A-Za-z0-9.-]+$",
           "description": "DNS-like authority name of the successor."
-        },
-        "namespaces": {
-          "type": "array",
-          "items": { "type": "string" },
-          "minItems": 1,
-          "description": "Namespaces transferred to the successor. Use ['*'] to transfer all."
         },
         "transfer_event_id": {
           "type": "string",
@@ -84,7 +93,14 @@
         },
         "effective_from": {
           "type": "string",
-          "format": "date-time"
+          "format": "date-time",
+          "description": "ISO 8601 timestamp at which the transfer takes effect."
+        },
+        "namespaces": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "description": "Optional. Namespaces transferred to the successor; use ['*'] for all. Informational — the authoritative list lives in the authority_transfer event payload."
         }
       }
     },

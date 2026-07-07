@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mfgs-us/phip/schemas/core.json",
-  "version": "1.0",
+  "version": "1.1",
   "title": "PhIP Core Object",
   "description": "JSON Schema for a PhIP (Physical Information Protocol) Object as defined in PhIP Core Specification v0.1.0-draft. Validates object model structure, lifecycle state vocabularies (per object type), relation vocabulary, and event log structure. Cross-event constraints — hash chain continuity, lifecycle transition validity across history, signature cryptographic verification, capability token verification — are resolver-enforced and outside the scope of this schema.",
 
@@ -473,6 +473,28 @@
               }
             }
           }
+        },
+        {
+          "description": "measurement event: payload MUST carry metric, value, and as_of (§11.4.2). value MAY be numeric or string (for pass/fail/derived outcomes).",
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "const": "measurement" } }
+          },
+          "then": {
+            "required": ["payload"],
+            "properties": {
+              "payload": {
+                "type": "object",
+                "required": ["metric", "value", "as_of"],
+                "properties": {
+                  "metric": { "type": "string" },
+                  "value": { "type": ["number", "string"] },
+                  "unit": { "type": "string" },
+                  "as_of": { "$ref": "#/$defs/iso8601" }
+                }
+              }
+            }
+          }
         }
       ]
     },
@@ -532,8 +554,8 @@
         "key_id": { "$ref": "#/$defs/phipUri" },
         "value": {
           "type": "string",
-          "description": "Signature bytes encoded as base64url. The literal 'base64url:' prefix shown in spec examples is permitted but not required.",
-          "pattern": "^(base64url:)?[A-Za-z0-9_\\-]+={0,2}$"
+          "description": "Ed25519 signature bytes (64 bytes) encoded as unpadded base64url — always exactly 86 characters. The literal 'base64url:' prefix shown in spec examples is permitted but not required.",
+          "pattern": "^(base64url:)?[A-Za-z0-9_-]{86}$"
         }
       }
     }

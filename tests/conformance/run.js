@@ -1400,7 +1400,37 @@ async function main() {
   process.exit(fail === 0 ? 0 : 1);
 }
 
+// Connection-level failures (server down, DNS miss, TLS reset) surface as
+// a fetch TypeError with a `cause` carrying the underlying syscall code.
+// Report those as a clear "server unreachable" message rather than dumping
+// a stack trace that looks like a bug in the suite itself.
+const CONNECT_ERROR_CODES = new Set([
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "EAI_AGAIN",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "UND_ERR_CONNECT_TIMEOUT",
+]);
+
+function connectErrorCode(err) {
+  for (let e = err; e; e = e.cause) {
+    if (e.code && CONNECT_ERROR_CODES.has(e.code)) return e.code;
+  }
+  return null;
+}
+
 main().catch((err) => {
+  const code = connectErrorCode(err);
+  if (code) {
+    console.error(
+      `\nCould not reach the resolver at ${BASE_URL} (${code}).\n` +
+        `Check that the server is running and the base URL is correct, then re-run.`,
+    );
+    process.exit(2);
+  }
   console.error("conformance suite crashed:", err);
   process.exit(2);
 });

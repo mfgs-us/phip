@@ -97,6 +97,44 @@ read-only PhIP resolver in the
 [mfgs-us/phip#10](https://github.com/mfgs-us/phip/pull/10) for the
 draft PR.
 
+### Fixed — schema / doc / test consistency sweep
+
+Repository review pass; no normative spec text changed.
+
+- `schemas/meta.json` → 1.2:
+  - `successor` no longer requires `namespaces` (not part of the §12.7
+    successor shape) and now matches §12.7's `{ authority,
+    transfer_event_id, effective_from }`. `namespaces` is retained as an
+    optional, informational field. Previously a spec-conformant
+    `successor` object was rejected.
+  - `schema_namespaces` items now accept the object form
+    `{ namespace, min, max }` in addition to strings, per §8.4.5.
+    Previously the spec's own object example failed validation.
+- `schemas/core.json` → 1.1:
+  - Added the missing conditional payload branch for `measurement`
+    events (`metric`, `value`, `as_of` required per §11.4.2).
+  - Tightened the signature `value` pattern to the strict unpadded-86-char
+    base64url form, matching `capability-token.json` and
+    `bundle-manifest.json` (an Ed25519 signature is always exactly 86
+    base64url chars).
+- `schemas/topology-response.json` → 1.1: same signature `value`
+  tightening as core.json.
+- `tests/vectors/self-check.js`: added a `[uri]` section that parses and
+  asserts the decomposition of every `uri/cases.json` fixture and the
+  rejection of every invalid case. `uri/cases.json` was previously
+  generated but never exercised despite the READMEs advertising URI-parse
+  coverage. Self-check 200 → 210 assertions.
+- `tests/conformance/run.js`: a connection-level failure (server down,
+  DNS miss, TLS reset) now reports a clear "could not reach the resolver"
+  message instead of dumping a stack trace that reads like a suite bug.
+- Docs: completed the Node-reference retirement cleanup that commit
+  `c3613f9` began — removed stale `cd reference` / in-tree-reference
+  instructions and the contradictory "Go" implementation stack from
+  `README.md`, `IMPLEMENTATIONS.md`, `VERSIONING.md`, and
+  `CONTRIBUTING.md`; refreshed stale assertion counts. Corrected the
+  `previous_hash` formula and the §12.x protocol-operation cross-references
+  in `TUTORIAL.md`.
+
 ## [0.1.0-draft] — 2026-04-09
 
 ### Added
