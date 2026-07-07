@@ -11,9 +11,10 @@ Implementations that **host** PhIP objects.
 
 | Implementation | Language | Class | Spec | Vectors | HTTP | Federation | Notes |
 |---|---|---|---|---|---|---|---|
-| [phip reference](./reference) | Node 20+ | Full | 0.1.0-draft | 189/189 | 76/76 | 30/30 | In-tree; pedagogical, in-memory only, NOT for production |
+| [phip-server](https://github.com/mfgs-us/phip-server) | Python 3.11+ | Full | 0.1.0-draft | — | — | — | Reference + production server (FastAPI, Postgres/SQLite, Docker Compose) |
 
-Conformance class definitions are in spec §13.
+Conformance class definitions are in spec §13. (The earlier in-tree Node
+reference was retired when `phip-server` landed.)
 
 ## Client libraries
 
@@ -41,7 +42,7 @@ Add a row to the table above with:
 - Language and runtime
 - Conformance class (resolver) or "Client" (lib)
 - Spec version targeted
-- Test pass count (e.g. `189/189`)
+- Test pass count (e.g. `210/210`)
 - Notes on production readiness
 
 ## Why this list matters
