@@ -96,7 +96,7 @@ In another terminal, prove it works:
 ```bash
 cd tests/conformance
 node run.js http://127.0.0.1:8080 --authority test.local
-# passed, 0 failed
+# all passed, 0 failed
 ```
 
 ### Validate any other PhIP server

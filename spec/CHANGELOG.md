@@ -101,15 +101,21 @@ draft PR.
 
 Repository review pass; no normative spec text changed.
 
-- `schemas/meta.json` → 1.2:
+- `schemas/meta.json` → 1.2 (this revision only ever loosens what 1.1
+  accepted — no field that validated before is rejected now):
   - `successor` no longer requires `namespaces` (not part of the §12.7
-    successor shape) and now matches §12.7's `{ authority,
-    transfer_event_id, effective_from }`. `namespaces` is retained as an
-    optional, informational field. Previously a spec-conformant
+    successor shape); `namespaces` is retained as an optional,
+    informational field. Required is now `{ authority, transfer_event_id }`;
+    `effective_from` is defined and SHOULD be present per §12.7 but is left
+    optional to avoid a tightening. Previously a spec-conformant
     `successor` object was rejected.
   - `schema_namespaces` items now accept the object form
     `{ namespace, min, max }` in addition to strings, per §8.4.5.
     Previously the spec's own object example failed validation.
+  - `tests/conformance/run.js` §20 successor probe now skips when
+    `/meta.successor` carries no concrete `namespaces` (rather than
+    probing a guessed `"any"` namespace and failing), keeping the schema
+    and the suite consistent about `namespaces` being optional.
 - `schemas/core.json` → 1.1:
   - Added the missing conditional payload branch for `measurement`
     events (`metric`, `value`, `as_of` required per §11.4.2).

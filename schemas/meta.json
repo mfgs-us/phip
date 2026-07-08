@@ -77,7 +77,7 @@
     },
     "successor": {
       "type": "object",
-      "required": ["authority", "transfer_event_id", "effective_from"],
+      "required": ["authority", "transfer_event_id"],
       "additionalProperties": true,
       "description": "Present iff this authority has been transferred (Section 12.7). Shape: { authority, transfer_event_id, effective_from }. Clients SHOULD redirect subsequent requests to the successor. The transferred namespaces are carried by the authority_transfer event itself (Section 4.6.2), not repeated here.",
       "properties": {
@@ -94,7 +94,7 @@
         "effective_from": {
           "type": "string",
           "format": "date-time",
-          "description": "ISO 8601 timestamp at which the transfer takes effect."
+          "description": "ISO 8601 timestamp at which the transfer takes effect. SHOULD be present per the §12.7 shape; kept optional here so this schema only ever loosens what the previous version accepted."
         },
         "namespaces": {
           "type": "array",

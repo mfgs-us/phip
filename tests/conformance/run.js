@@ -1041,9 +1041,13 @@ async function main() {
 
     if (rMeta.body.successor && rMeta.body.successor.authority) {
       const succ = rMeta.body.successor;
-      const probeNs = (succ.namespaces && succ.namespaces[0]) || "any";
-      if (probeNs === "*") {
-        console.log("  (skipped successor probe — wildcard namespaces, no test target)");
+      // `namespaces` is optional on /meta.successor (§12.7 lists only
+      // authority/transfer_event_id/effective_from); the authoritative list
+      // lives in the authority_transfer event. Without a concrete namespace
+      // here we have no target to probe, so skip rather than guess.
+      const probeNs = succ.namespaces && succ.namespaces[0];
+      if (!probeNs || probeNs === "*") {
+        console.log("  (skipped successor probe — no concrete namespace in /meta.successor)");
       } else {
         const rXfer = await request("GET", RESOLVE(probeNs, "probe-" + RUN_ID));
         test(
@@ -1415,9 +1419,20 @@ const CONNECT_ERROR_CODES = new Set([
   "UND_ERR_CONNECT_TIMEOUT",
 ]);
 
+// Walk the `cause` chain AND any AggregateError `errors` array — a
+// multi-address connect failure (e.g. localhost resolving to both ::1 and
+// 127.0.0.1) arrives as an AggregateError whose top-level `code` is unset
+// but whose member errors carry the real codes.
 function connectErrorCode(err) {
-  for (let e = err; e; e = e.cause) {
+  const seen = new Set();
+  const stack = [err];
+  while (stack.length) {
+    const e = stack.pop();
+    if (!e || typeof e !== "object" || seen.has(e)) continue;
+    seen.add(e);
     if (e.code && CONNECT_ERROR_CODES.has(e.code)) return e.code;
+    if (e.cause) stack.push(e.cause);
+    if (Array.isArray(e.errors)) for (const sub of e.errors) stack.push(sub);
   }
   return null;
 }
