@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mfgs-us/phip/schemas/topology-response.json",
-  "version": "1.1",
+  "version": "1.2",
   "title": "PhIP Topology Disclosure Response",
   "description": "Schema for the response body returned by GET /.well-known/phip/history/{namespace}/{local-id}?disclosure=topology when the resolver supports topology disclosure (Section 11.5.6). Topology mode exposes chain shape (event IDs, types, timestamps, and per-event hash links) without payloads, actors, or per-event signatures, so an authority can publicly attest that a restricted object exists and has been modified along a particular chain without revealing its contents.",
 
@@ -10,8 +10,10 @@
     "phip_id",
     "page_length",
     "disclosure",
+    "served_at",
     "topology",
-    "topology_signature"
+    "topology_signature",
+    "next_cursor"
   ],
   "additionalProperties": true,
   "properties": {
@@ -29,6 +31,12 @@
       "description": "Marker confirming this is a topology disclosure response, not a full-history response."
     },
 
+    "served_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 instant at which the resolver produced and signed this response. Covered by topology_signature (Section 11.5.6.4). Clients MUST reject a response whose served_at is older than a configured freshness bound (RECOMMENDED ≤ 300 s) — this is what makes a replayed old page detectable."
+    },
+
     "topology": {
       "type": "array",
       "description": "Slice of the object's event chain shape, always in ascending chain order (oldest first; genesis at index 0 on the first page). The request's `?order` parameter is ignored in topology mode — see Section 11.5.6.5. MAY be empty when a paginated request returns no entries on the current page (e.g., a cursor past the end of the chain).",
@@ -37,7 +45,7 @@
 
     "topology_signature": {
       "$ref": "#/$defs/topologySignature",
-      "description": "Ed25519 signature, by a resolver authority key, over the JCS canonicalization of the OBJECT { phip_id, page_length, disclosure, topology } — the four canonical fields per Section 11.5.6.4. Any other top-level fields the resolver emits (e.g., served_at, debug hints) are NOT covered by the signature; verifiers MUST ignore them when reconstructing signed bytes. Attests resolver-observed shape at response time; does NOT attest end-to-end chain integrity (that requires `read_history`)."
+      "description": "Ed25519 signature, by a resolver authority key, over the JCS canonicalization of the OBJECT { disclosure, next_cursor, page_length, phip_id, served_at, topology } — the six canonical envelope fields per Section 11.5.6.4 (served_at binds freshness, next_cursor binds completeness). Any OTHER top-level fields the resolver emits (debug hints, request IDs) are NOT covered by the signature; verifiers MUST ignore those extras when reconstructing signed bytes. Attests resolver-observed shape at the signed served_at time; does NOT attest end-to-end chain integrity (that requires `read_history`)."
     },
 
     "next_cursor": {

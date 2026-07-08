@@ -116,10 +116,13 @@
       "type": "array",
       "const": [
         ["concept", "design"],
+        ["concept", "disposed"],
         ["design", "prototype"],
         ["design", "qualified"],
+        ["design", "disposed"],
         ["prototype", "design"],
         ["prototype", "qualified"],
+        ["prototype", "disposed"],
         ["qualified", "stock"],
         ["qualified", "consumed"],
         ["stock", "deployed"],
@@ -186,7 +189,8 @@
             "instance_of",
             "supersedes",
             "superseded_by",
-            "manufactured_by"
+            "manufactured_by",
+            "signing_key_for"
           ]
         },
         {
@@ -321,7 +325,7 @@
                 "properties": {
                   "namespace": {
                     "type": "string",
-                    "pattern": "^(phip:[a-z][a-z0-9_\\-]*|org:[A-Za-z0-9.\\-]+(:[A-Za-z0-9_\\-]+)+)$"
+                    "pattern": "^(identity|phip:[a-z][a-z0-9_\\-]*|org:[A-Za-z0-9.\\-]+(:[A-Za-z0-9_\\-]+)+)$"
                   },
                   "updates": { "type": "object" }
                 }

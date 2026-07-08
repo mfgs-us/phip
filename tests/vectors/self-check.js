@@ -347,13 +347,17 @@ console.log("\n[topology]");
   };
 
   function verifyTopologySignature(response, keyId) {
-    // §11.5.6.4: construct {disclosure, page_length, phip_id, topology}
-    // from the response verbatim and JCS-canonicalize. Ignore all other
-    // top-level fields.
+    // §11.5.6.4: construct the six canonical envelope fields
+    // {disclosure, next_cursor, page_length, phip_id, served_at, topology}
+    // from the response verbatim and JCS-canonicalize. served_at binds
+    // freshness (anti-replay); next_cursor binds completeness
+    // (anti-truncation). Ignore all other top-level fields.
     const canonicalSigned = {
       disclosure: response.disclosure,
+      next_cursor: response.next_cursor ?? null,
       page_length: response.page_length,
       phip_id: response.phip_id,
+      served_at: response.served_at,
       topology: response.topology,
     };
     const bytes = Buffer.from(canonicalize(canonicalSigned), "utf8");

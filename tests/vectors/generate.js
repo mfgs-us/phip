@@ -448,9 +448,9 @@ writeJson("hashchain/sequence.json", {
 // ─────────────────────────────────────────────────────────────────────
 
 const MANUFACTURING_TRANSITIONS = {
-  concept: ["design"],
-  design: ["prototype", "qualified"],
-  prototype: ["design", "qualified"],
+  concept: ["design", "disposed"],
+  design: ["prototype", "qualified", "disposed"],
+  prototype: ["design", "qualified", "disposed"],
   qualified: ["stock", "consumed"],
   stock: ["deployed", "decommissioned", "consumed"],
   deployed: ["maintained", "decommissioned"],
@@ -969,15 +969,24 @@ function topologyEntryFor(event) {
   };
 }
 
-function signTopologyResponse({ phip_id, topology, key_id }) {
-  // §11.5.6.4: signature covers exactly {disclosure, page_length, phip_id, topology}.
-  // No other fields. JCS sorts keys lexically; the object literal below is
-  // for human readability — JCS produces identical bytes regardless of
-  // enumeration order.
+// Fixed resolver "served at" timestamp for reproducible topology vectors
+// (real resolvers stamp the current time; §11.5.6.4 requires it to be
+// signed so replays are detectable via a client-side freshness check).
+const TOP_SERVED_AT = "2026-01-22T15:00:00Z";
+
+function signTopologyResponse({ phip_id, topology, key_id, served_at, next_cursor }) {
+  // §11.5.6.4: signature covers EXACTLY the six canonical envelope fields
+  // {disclosure, next_cursor, page_length, phip_id, served_at, topology}.
+  // served_at binds freshness (anti-replay) and next_cursor binds
+  // completeness (anti-truncation). JCS sorts keys lexically; the object
+  // literal below is for readability — JCS produces identical bytes
+  // regardless of enumeration order.
   const canonicalSigned = {
     disclosure: "topology",
+    next_cursor,
     page_length: topology.length,
     phip_id,
+    served_at,
     topology,
   };
   const sig = crypto.sign(null, canonicalBytes(canonicalSigned), getKey(key_id).privateKey);
@@ -988,13 +997,14 @@ function signTopologyResponse({ phip_id, topology, key_id }) {
   };
 }
 
-function buildTopologyResponse({ phip_id, topology, key_id, next_cursor = null }) {
+function buildTopologyResponse({ phip_id, topology, key_id, next_cursor = null, served_at = TOP_SERVED_AT }) {
   return {
     phip_id,
     page_length: topology.length,
     disclosure: "topology",
+    served_at,
     topology,
-    topology_signature: signTopologyResponse({ phip_id, topology, key_id }),
+    topology_signature: signTopologyResponse({ phip_id, topology, key_id, served_at, next_cursor }),
     next_cursor,
   };
 }
@@ -1047,7 +1057,8 @@ const topologyCases = [];
     description:
       "3-event chain (created → state_transition → attribute_update). " +
       "Signature MUST verify against test-key-alice's public key over the " +
-      "JCS canonicalization of {disclosure, page_length, phip_id, topology}. " +
+      "JCS canonicalization of {disclosure, next_cursor, page_length, " +
+      "phip_id, served_at, topology}. " +
       "Chain walk MUST succeed: entry[N].previous_hash == entry[N-1].event_hash.",
     verifying_key_id: "test-key-alice",
     response: buildTopologyResponse({

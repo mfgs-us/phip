@@ -1133,7 +1133,8 @@ async function main() {
     }
     test("topology chain walk: previous_hash links match event_hashes", walkOk);
 
-    // Topology signature: covers JCS({disclosure, page_length, phip_id, topology}).
+    // Topology signature: covers JCS({disclosure, next_cursor, page_length,
+    // phip_id, served_at, topology}) — the six canonical envelope fields (§11.5.6.4).
     const sig = body && body.topology_signature;
     test(
       "topology_signature object present with algorithm/key_id/value",
@@ -1143,8 +1144,10 @@ async function main() {
     if (sig && sig.key_id) {
       const canonicalSigned = {
         disclosure: body.disclosure,
+        next_cursor: body.next_cursor ?? null,
         page_length: body.page_length,
         phip_id: body.phip_id,
+        served_at: body.served_at,
         topology: body.topology,
       };
       const signedBytes = Buffer.from(canonicalize(canonicalSigned), "utf8");
@@ -1313,8 +1316,10 @@ async function main() {
     if (sigA && sigA.key_id) {
       const canonicalSignedA = {
         disclosure: bodyA.disclosure,
+        next_cursor: bodyA.next_cursor ?? null,
         page_length: bodyA.page_length,
         phip_id: bodyA.phip_id,
+        served_at: bodyA.served_at,
         topology: bodyA.topology,
       };
       const signedBytesA = Buffer.from(canonicalize(canonicalSignedA), "utf8");
