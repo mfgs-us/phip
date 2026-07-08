@@ -75,6 +75,24 @@
       "items": { "type": "string", "format": "uri" },
       "description": "URLs of read-only mirrors hosting frozen snapshots of this authority's records (Section 4.6.5)."
     },
+    "predecessor_root_keys": {
+      "type": "array",
+      "description": "Independent trust anchors for verifying transfers/mirrors of predecessor authorities (Section 4.6.3 check 6, Section 4.6.5). Published by this live authority under its own DNS; verifiers MUST anchor on these rather than on a fingerprint served by the party under verification.",
+      "items": {
+        "type": "object",
+        "required": ["authority", "thumbprint"],
+        "additionalProperties": true,
+        "properties": {
+          "authority": { "type": "string", "pattern": "^[A-Za-z0-9.-]+$" },
+          "key_id": { "$ref": "#/$defs/phipUri" },
+          "thumbprint": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "description": "SHA-256 thumbprint of the predecessor root public key."
+          }
+        }
+      }
+    },
     "successor": {
       "type": "object",
       "required": ["authority", "transfer_event_id"],

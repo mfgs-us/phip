@@ -403,14 +403,28 @@
                     "items": {
                       "type": "object",
                       "required": ["phip_id"],
+                      "description": "yield_fraction (scalar, single-input) and yields (per-input array) are mutually exclusive; see spec §10.4.1.",
                       "properties": {
                         "phip_id": { "$ref": "#/$defs/phipUri" },
                         "yield_fraction": {
                           "type": "number",
                           "minimum": 0,
                           "maximum": 1
+                        },
+                        "yields": {
+                          "type": "array",
+                          "description": "Per-input yield attribution for outputs derived from more than one input (§10.4.1).",
+                          "items": {
+                            "type": "object",
+                            "required": ["input", "fraction"],
+                            "properties": {
+                              "input": { "$ref": "#/$defs/phipUri" },
+                              "fraction": { "type": "number", "minimum": 0, "maximum": 1 }
+                            }
+                          }
                         }
-                      }
+                      },
+                      "not": { "required": ["yield_fraction", "yields"] }
                     }
                   }
                 }

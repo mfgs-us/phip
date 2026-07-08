@@ -141,6 +141,49 @@ Repository review pass; no normative spec text changed.
   `previous_hash` formula and the §12.x protocol-operation cross-references
   in `TUTORIAL.md`.
 
+### Fixed — deep spec review (trust / federation / access / lifecycle / ops)
+
+Normative hardening from a systematic security-and-consistency review.
+Resolved as Appendix A entries A43–A57. Highlights:
+
+- **Trust attribution (A43, §11.1.1).** Defined the `key_id`→`actor`
+  authorization binding — a verifying signature is now attributable
+  (same authority + self-key or a new `signing_key_for` relation);
+  replaces the undefined `delegated_signing_for` reference.
+- **Key validity + revocation (A44, §11.2.2–.5).** Resolved the
+  "valid iff active" vs "historical events remain valid" contradiction
+  (validity is scoped to the event timestamp); added durable revocation
+  (`revoked_at`, no un-revoking, caching must observe it).
+- **Signed delegation (A45, §4.5).** Delegation entries are now
+  root-key signed; the cross-authority redirect trust bridge is
+  cryptographic, not an unsigned `/meta` field. Dropped the unbacked
+  "`/meta` is a PhIP object with history" claim.
+- **Federation anchors (A46–A47, §4.6).** First-transfer-wins tiebreak
+  for conflicting transfers; `predecessor_root_keys` in `/meta` as an
+  independent anchor so a forked mirror is detectable once source DNS
+  dies.
+- **Access control (A48–A50, §11.3–§11.5.6).** Fixed the §11.5.2 step-4
+  `granted_to` ordering; resolver MUST reject `"*"` tokens with
+  write/`read_history`/`read_query` scope; topology signature now binds
+  `served_at` + `next_cursor` (anti-replay, anti-truncation).
+- **Ops (A51–A53, §12).** `DUPLICATE_EVENT` dedup ordered before
+  chain-continuity; QUERY ACL filtering is MUST and `total` excludes
+  restricted objects; §13.2 error-code wording corrected.
+- **Lifecycle / object model (A54–A57, §5–§10).** Abandon edges
+  (concept/design/prototype → disposed); identity mutated via
+  `attribute_update` namespace `"identity"`; canonical ε for
+  conservation; lot_split/merge transition semantics; per-input `yields`
+  for multi-input provenance; `process` host object; design cannot enter
+  `deployed`/`maintained`; CREATE rejects terminal initial state.
+- **Security Considerations (§14) + G3** expanded to acknowledge
+  backdating-vs-revocation, history withholding/truncation, and TOFU
+  equivocation as known v0.1 limitations with mitigations.
+
+Schema bumps: `meta.json` → 1.3 (signed delegation, `predecessor_root_keys`);
+`core.json` → 1.1 (signing_key_for, identity namespace, abandon edges,
+process yields); `topology-response.json` → 1.2 (served_at + next_cursor).
+Self-check 210/210; vectors regenerated deterministically.
+
 ## [0.1.0-draft] — 2026-04-09
 
 ### Added

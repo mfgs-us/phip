@@ -705,11 +705,28 @@ the source and successor authorities MUST verify:
    successor's root key.
 5. The transfer event's `successor_authority` matches the authority 
    serving the post-transfer events.
+6. **First-transfer-wins.** The transfer event is the *first* validly 
+   signed transfer of the requested namespace in the source authority 
+   record's hash chain. A namespace may be transferred by a given 
+   authority at most once; if a verifier observes two validly signed 
+   `authority_transfer` events from the same source covering the same 
+   namespace, the one appearing earlier in the authority record's chain 
+   (§4.6.2) binds and any later one MUST be treated as void. Because the 
+   authority record is an append-only, hash-chained PhIP object, its 
+   ordering is authenticated — this gives a deterministic tiebreak even 
+   when a *later* root-key compromise produces a second, cryptographically 
+   valid but illegitimate transfer.
 
 If any of these checks fail, the client MUST reject the chain as 
-non-authentic. Implementations SHOULD cache root key fingerprints out 
-of band (e.g., trust-on-first-use with explicit pinning for 
-high-stakes deployments) to mitigate the risk of root key compromise.
+non-authentic. To make check 2/3 and the first-transfer-wins rule 
+enforceable even after the source's DNS is gone, verifiers MUST obtain 
+the source authority's root-key fingerprint from an anchor **not served 
+by the party under verification** — either an out-of-band pin 
+(trust-on-first-use with explicit pinning for high-stakes deployments), 
+or the successor's `/meta.predecessor_root_keys` (§4.6.5, §12.7), which 
+the live successor publishes under its own DNS. A fingerprint learned 
+only from the mirror or successor-forwarded chain being verified is not 
+an independent anchor.
 
 #### 4.6.4 Redirects After Transfer
 
@@ -742,8 +759,20 @@ MUST set `Cache-Control: public, immutable` and SHOULD set a long
 
 A client that retrieves an object from a mirror MUST verify the 
 authority-transfer chain back to the original authority record, not 
-just the local hash chain. This prevents a malicious mirror from 
-serving a forked history.
+just the local hash chain. This only prevents a malicious mirror from 
+serving a forked history if the source root-key fingerprint used to 
+check the transfer signature comes from an **independent anchor** — not 
+from the mirror itself. Since the source's DNS is typically dead by the 
+time a mirror is in use, the anchor is the successor's 
+`/meta.predecessor_root_keys` (§12.7): the live successor, under its own 
+authenticated DNS + TLS, publishes the fingerprint(s) of the 
+predecessor root key(s) it received transfers from. A verifier fetches 
+that fingerprint from the successor, then verifies the mirror-served 
+transfer event's signature against a key matching it. Without this, a 
+malicious mirror could serve a forked history *and* a fabricated source 
+root key that signs it — every local check would pass against the 
+attacker's own anchor. Verifiers that pinned the source root key out of 
+band before DNS death SHOULD prefer that pin.
 
 #### 4.6.6 Multiple Transfers
 
@@ -977,6 +1006,15 @@ The states map to design release status:
   this revision but existing instances remain valid
 - `consumed` / `disposed` — design is retired
 
+A `design` object has no physical instance, so a resolver MUST reject 
+any `state_transition` that would place a `design` into `deployed` or 
+`maintained`: those states denote a physical unit in service (§9.2), 
+which a design never is. The `stock → deployed` and `deployed ↔ 
+maintained` edges of the §9.2.1 table therefore do not apply to 
+`object_type: design`; a released design remains in `stock` until 
+`decommissioned`. (This is a per-type narrowing of the track, alongside 
+the abandon edges of §9.2.1.)
+
 Design revisions are separate `design` objects, linked via the 
 `supersedes` relation (Section 7.1). A new revision does not invalidate 
 physical objects that `instance_of` the prior revision; their 
@@ -1032,7 +1070,7 @@ A lot's `identity.quantity` field is an object with these fields:
 | `value` | MUST | Numeric quantity. MUST be ≥ 0 |
 | `unit` | MUST | SI unit symbol (`kg`, `g`, `m`, `L`, `units`, etc.) |
 | `as_of` | SHOULD | ISO 8601 timestamp of the most recent measurement |
-| `precision` | MAY | Quantity precision (e.g., `0.001` for milligram precision on a kg-scale). Used as the conservation tolerance `ε` in §10.5.1 |
+| `precision` | MAY | Quantity precision (e.g., `0.001` for milligram precision on a kg-scale). Feeds the conservation tolerance `ε` in §10.5.1: when participating lots declare `precision`, `ε` is the coarsest declared value; absent any declaration, `ε = 1e-6 × Q` |
 
 The current quantity is a projection of the event history. Each 
 `lot_split`, `lot_merge`, and `attribute_update` that changes the 
@@ -1597,7 +1635,7 @@ Each event MUST contain:
 | `attribute_update` | One or more attribute values changed |
 | `relation_added` | A relation was added |
 | `relation_removed` | A relation was removed |
-| `software_update` | Software or firmware updated. `payload` MUST include `from` and `to` |
+| `software_update` | Software or firmware updated. `payload` MUST include `from` and `to`. Projects onto `attributes.phip:software` exactly as an `attribute_update` to that namespace would (setting the relevant version/firmware field to `to`); it is a named specialization for the common firmware/software-version case, not a separate projection target |
 | `measurement` | A measurement or inspection result recorded |
 | `process` | A transformation that consumes N input objects and produces M output objects, with optional yield ratios. See 10.4 |
 | `lot_split` | A lot was divided into two or more new lots. See 10.5 |
@@ -1663,6 +1701,18 @@ processing, and similar transformations.
 }
 ```
 
+**Host object.** Unlike `lot_split` (which is pushed to the lot being 
+split), a `process` event has N inputs and M outputs and so needs an 
+explicitly designated host — the single object whose history it lives 
+in, per the `phip_id` field required of every event (§10.1). The 
+`process` event's `phip_id` (its host) MUST be `outputs[0].phip_id` — 
+the primary output — and the other outputs reference the transformation 
+via `derived_from`. A process with no output (pure teardown) is instead 
+hosted on `inputs[0].phip_id`. This gives resolvers a deterministic 
+place to store and require the event, and ensures a **corrective** 
+`process` event (§10.4.2) always has a live, non-terminal host (a 
+primary output), never a `consumed` input.
+
 When an input is marked `"consumed": true`, a corresponding `state_transition` 
 event to `consumed` SHOULD be pushed to that input object. Output objects 
 SHOULD have `derived_from` relations pointing to all input objects. 
@@ -1677,28 +1727,53 @@ relations) are the pushing actor's responsibility and may fail independently.
 Full cross-namespace atomicity (two-phase commit or saga patterns) is 
 deferred to a future version of this specification.
 
-The `yield_fraction` field is OPTIONAL and represents the mass fraction of 
-the input that contributed to this output. This enables proportional 
-provenance tracking for regulated materials.
+The `yield_fraction` field is OPTIONAL. The scalar form shown above 
+represents the mass fraction of a **single** input that contributed to 
+this output, and is well-defined only when the output `derived_from` 
+exactly one input. When an output is derived from **multiple** inputs 
+(as `gold-batch-0042` above, recovered from two servers), a single 
+scalar cannot say what fraction came from which input — it would be 
+counted in full against *every* input's conservation sum, asserting the 
+output is simultaneously that fraction of each. For multi-input outputs 
+an authority SHOULD use the expanded per-input form instead:
+
+```json
+{ "phip_id": "phip://recycler.com/materials/gold-batch-0042",
+  "yields": [
+    { "input": "phip://recycler.com/intake/server-SN042", "fraction": 0.0002 },
+    { "input": "phip://recycler.com/intake/server-SN043", "fraction": 0.0002 }
+  ] }
+```
+
+`yields` and the scalar `yield_fraction` are mutually exclusive on a 
+given output; the scalar is shorthand for a single-input `yields` entry. 
+This enables proportional provenance tracking for regulated materials 
+without the double-counting the scalar form causes across multiple 
+inputs.
 
 #### 10.4.1 Yield Fraction Semantics
 
-When `yield_fraction` is supplied on outputs, the values MUST be 
-non-negative real numbers in the closed interval `[0, 1]`.
+When `yield_fraction` (or a `yields[].fraction`) is supplied on outputs, 
+the values MUST be non-negative real numbers in the closed interval 
+`[0, 1]`.
 
-The yield fractions on outputs that share a single input describe how 
-that input was distributed across outputs. For each input referenced 
-by one or more outputs, the sum of `yield_fraction` values on outputs 
-that point at that input via `derived_from` MUST satisfy:
+The yield fractions describe how each input was distributed across 
+outputs. For each input, the sum — over all outputs — of the fraction 
+attributed to *that input* (a scalar `yield_fraction` on a single-input 
+output, or the matching `yields[].fraction` entry on a multi-input 
+output) MUST satisfy:
 
 ```
 sum(yield_fraction_i) ≤ 1.0 + ε
 ```
 
-where `ε` is a small rounding tolerance. Authorities SHOULD use 
-`ε = 1e-6`. A sum strictly less than 1 is permitted — it represents 
-material loss (slag, scrap, evaporation) that is not tracked as a 
-distinct output.
+where `ε` is a fixed rounding tolerance. For yield-fraction sums `ε` is 
+**exactly `1e-6`** (not resolver-configurable) — a single normative value 
+so that every resolver, including a Read-Only replica revalidating a 
+served event (§13.2), reaches the identical accept/reject verdict on the 
+same signed event. A sum strictly less than 1 is permitted — it 
+represents material loss (slag, scrap, evaporation) that is not tracked 
+as a distinct output.
 
 A sum exceeding `1 + ε` MUST be rejected by the resolver with 
 `INVALID_EVENT` (422). Sums exceeding 1 imply mass duplication, which 
@@ -1732,9 +1807,28 @@ lost or unaccounted material as an explicit output).
 
 Lots may be split or merged during their lifecycle.
 
+**Transition semantics.** A `lot_split`/`lot_merge` event *is itself* 
+the transition of the consumed lot(s) to `consumed` — the resolver 
+applies the `→ consumed` state change as part of processing the lot 
+event. A separate `state_transition` event MUST NOT be required and 
+SHOULD NOT be emitted (this differs from `process`, §10.4, where the 
+consumed transition on inputs is a separate SHOULD). The resolver MUST 
+enforce that `consumed` is reachable from the lot's current state per 
+the §9.2.1 table: a lot must be in `qualified`, `stock`, or 
+`decommissioned` to be split or merged. A `deployed` lot MUST first 
+transition to `decommissioned`; a lot already in a terminal state MUST 
+be rejected with `TERMINAL_STATE` (409). Because the lot event carries 
+the final quantity accounting in its own payload (the `resulting_lots` / 
+`source_lots` quantities), no post-`consumed` `attribute_update` to the 
+now-terminal lot is needed or permitted — the projection of 
+`identity.quantity` for a consumed lot is fixed at the split/merge. Any 
+corrective accounting after the fact is recorded on a *non-terminal* 
+object (a resulting lot, or a corrective `process` event whose host is a 
+live output — §10.4.2), never on the consumed lot.
+
 **Lot Split:** A `lot_split` event is pushed to the original lot. The 
-original lot transitions to `consumed`. New lots are created with 
-`derived_from` relations pointing to the original.
+original lot transitions to `consumed` (per the semantics above). New 
+lots are created with `derived_from` relations pointing to the original.
 
 ```json
 {
@@ -1801,10 +1895,24 @@ Mergers that introduce mass (e.g., adding a non-tracked filler) MUST
 NOT use `lot_merge`; a `process` event with the filler as an explicit 
 input is the correct representation.
 
-**Tolerance.** `ε` SHOULD be set to the smaller of:
-- 0.1 % of the source quantity, or
-- the unit precision of the relevant measurement (e.g. ε = 1g for 
-  measurements taken on a gram-precision scale).
+**Tolerance.** `ε` MUST be computed deterministically so that every 
+resolver — including a Read-Only replica revalidating a served event 
+(§13.2) — reaches the identical verdict on the same signed event:
+
+- If **any** participating lot's quantity carries a `precision` (§6.4.1), 
+  `ε` is the **coarsest** (largest) such declared `precision` across all 
+  participants. This is the single interpretation of "precision as ε" — 
+  earlier drafts gave two conflicting rules (§6.4.1 said ε *equals* 
+  `precision`; this section said `min(0.1 % of source, precision)`); the 
+  coarsest-declared-precision rule supersedes both.
+- If **no** participant declares a `precision`, `ε = 1e-6 × Q`, where `Q` 
+  is the source quantity for a split and the resulting quantity for a 
+  merge.
+
+`ε` is not otherwise resolver-configurable for conservation checks. 
+(This matters because the conservation *rejection* is a MUST — §10.5.1 
+below — so the threshold it turns on cannot be left to per-resolver 
+discretion.)
 
 Resolvers MUST validate conservation only when **all** participating 
 lots carry comparable quantity fields. Splits or merges between lots 
@@ -2423,9 +2531,13 @@ read its history. The chain head MUST NOT be exposed via metadata
 documents, error responses, or any other side channel that bypasses 
 the access policy. In particular, `CHAIN_CONFLICT` responses on PUSH 
 to a restricted object MUST NOT include `current_head` if the pushing 
-actor lacks a `read_state` or `read_history` scope; the resolver MUST 
-instead return `ACCESS_DENIED` (403) and require the pusher to obtain 
-read scope before retrying.
+actor lacks a `read_state`, `read_history`, **or `read_topology`** scope; 
+the resolver MUST instead return `ACCESS_DENIED` (403) and require the 
+pusher to obtain read scope before retrying. (`read_topology` is included 
+because the chain head is exactly the last entry's `event_hash` that 
+topology mode already discloses (§11.5.6.3) — withholding it from a 
+`read_topology` holder on conflict would be pure friction, since they can 
+read the identical value via `?disclosure=topology`.)
 
 The above restrictions do not apply to topology disclosure (§11.5.6).
 Topology mode is the canonical disclosed view of chain head and
@@ -2796,7 +2908,13 @@ A PhIP signed request MUST satisfy the following profile:
    - `@target-uri` (derived component)
    - `content-digest` (header, RFC 9530 SHA-256 digest of the request
      body; the header MAY be omitted only when the body is empty, in
-     which case `content-digest` is also omitted from the covered set)
+     which case `content-digest` is also omitted from the covered set).
+     The resolver MUST recompute the digest over the received body and
+     reject the request if it does not match the `Content-Digest`
+     header value — RFC 9421 signature verification proves only that
+     the *declared* digest was signed, not that it matches the actual
+     bytes, so without this check the body (the event being pushed)
+     remains swappable.
    - `phip-actor` (header — defined in 3 below)
 3. **Required signature parameters.** The `Signature-Input` value
    MUST also carry these RFC 9421 §2.3 parameters:
@@ -2813,9 +2931,16 @@ A PhIP signed request MUST satisfy the following profile:
 5. **Signature freshness.** The `created` parameter MUST be within
    ±300 seconds of the resolver's current time. Older or future-dated
    requests MUST be rejected to mitigate replay.
-6. **Replay window.** Resolvers SHOULD maintain a short-lived cache
-   (≥ 600 seconds) of seen signature values keyed by `keyid` and
-   `created` to reject exact replays.
+6. **Replay window.** Resolvers enforcing `policy: capability` MUST
+   maintain a short-lived cache (covering at least the full ±300 s
+   freshness window, RECOMMENDED ≥ 600 seconds) of seen signatures and
+   reject exact replays. To avoid false rejections of distinct
+   legitimate requests from the same key in the same second, the cache
+   MUST key on the full signature `value` (not merely `keyid`+`created`).
+   (For idempotent GETs this is defense-in-depth; for PUSH the
+   `event_id` dedup of §12.3 is the primary replay guard, so this is a
+   SHOULD for read-only requests and a MUST only where a signed request
+   carries a state-changing body.)
 
 Example (RFC 9421 illustrative format):
 
@@ -2917,9 +3042,13 @@ initial `state`, and any initial `identity`, `relations`, or `attributes`.
 ```
 
 The resolver MUST validate: event signature, `phip_id` uniqueness within 
-the namespace, and that the initial state is valid for the object type 
-(see Section 9). The resolver MUST reject creation if the `phip_id` is 
-already registered.
+the namespace, and that the initial state is a valid **entry** state for 
+the object type (see Section 9). "Valid entry state" means more than 
+track membership: the resolver MUST reject creation in a terminal state 
+(`consumed`, `disposed`, or `archived`) — an object cannot be born 
+unable to accept any event — and MUST reject the per-type narrowings of 
+§9 (e.g. a `design` created directly in `deployed`). The resolver MUST 
+reject creation if the `phip_id` is already registered.
 
 CREATE is only valid within the caller's own authority. An actor MUST NOT 
 create objects in a foreign namespace. Cross-org object creation requires 
@@ -3263,9 +3392,13 @@ projections (current state, no history).
 }
 ```
 
-`total` is the total count of matching objects (MAY be approximate for 
-performance). `next_cursor` is `null` when no more results exist. 
-`limit` defaults to 100 and MUST NOT exceed 1000.
+`total` is the count of matching objects **the requesting caller is 
+permitted to read** (MAY be approximate for performance). It MUST NOT 
+count objects omitted by the access-control filter of §11.5.3 — 
+reporting a `total` larger than `matches` would leak the existence and 
+count of restricted objects, exactly the signal §11.5.3 suppresses. 
+`next_cursor` is `null` when no more results exist. `limit` defaults to 
+100 and MUST NOT exceed 1000.
 
 #### 12.4.5 Query Scope
 
@@ -3274,9 +3407,16 @@ Cross-namespace and cross-authority queries are not supported in PhIP
 v0.1. A client that needs to query across authorities MUST issue 
 separate QUERY requests to each authority.
 
-QUERY does not require authentication by default — it returns the same 
-objects that GET would return. Access control on QUERY results, if 
-implemented, SHOULD be consistent with access control on GET.
+QUERY does not require authentication for objects that are 
+world-readable — an anonymous QUERY returns the same `public` objects an 
+anonymous GET would. But access control on QUERY results is **not 
+optional**: a resolver MUST apply the same `phip:access` filtering to 
+QUERY that it applies to GET (§11.5.3) — restricted objects the caller 
+cannot read MUST NOT appear in `matches` and MUST NOT be counted in 
+`total`. "Same objects that GET would return" means exactly that, 
+including GET's access decision; it is not a licence to skip filtering. 
+(Earlier drafts phrased this as "if implemented, SHOULD," which 
+contradicted the §11.5.3 MUST; the MUST governs.)
 
 ### 12.5 Batch Operations
 
@@ -3462,6 +3602,7 @@ fields:
 | `query_capabilities` | object | MAY | Optional map describing supported filter operators, glob syntax, sort orders |
 | `root_key` | string | SHOULD | PhIP URI of this authority's root key (Section 4.6.1). Clients use this to anchor trust for transfer verification |
 | `mirror_urls` | array of strings | MAY | URLs of read-only mirrors hosting frozen snapshots of this authority's records. See Section 4.6.5 |
+| `predecessor_root_keys` | array of objects | SHOULD (when this authority has received transfers) | Independent trust anchors for verifying transfers/mirrors of predecessor authorities. Each entry `{ "authority": "...", "key_id": "phip://.../keys/root", "thumbprint": "sha256:..." }` pins the SHA-256 thumbprint of a predecessor's root public key, published by this (live) authority under its own DNS. Verifiers checking a mirror or transferred chain (§4.6.3 check 6, §4.6.5) MUST anchor on this rather than on a fingerprint served by the party under verification |
 | `successor` | object | MAY | Present iff this authority has been transferred. Object: `{ "authority": "newco.example", "transfer_event_id": "...", "effective_from": "..." }`. Clients SHOULD redirect subsequent requests to the successor |
 | `delegations` | array of objects | MAY | Active sub-namespace delegations. See Section 4.5.1 for entry shape |
 | `conformance_class` | string | SHOULD | One of `full`, `read-only`, `mirror`, `client-only` (Section 13). Absence implies `full` for compatibility with v0.1 resolvers |
@@ -3619,10 +3760,12 @@ resolver **except** the write operations. Specifically, it MUST:
 - Support cursor pagination
 
 A Read-Only resolver MUST reject CREATE and PUSH attempts with 
-`405 Method Not Allowed` (HTTP-level — there is no PhIP error code 
-for this case, since the server is not refusing on protocol grounds 
-but on capability). The response body SHOULD include an error 
-envelope with code `OPERATION_NOT_SUPPORTED`:
+`405 Method Not Allowed` and a body carrying the `OPERATION_NOT_SUPPORTED` 
+error envelope (§12.6.1). Emitting the envelope is a MUST here, matching 
+the identical requirement for batch endpoints (§12.5.4) and Mirror QUERY 
+(§13.3) — the earlier claim that "there is no PhIP error code for this 
+case" was incorrect, since `OPERATION_NOT_SUPPORTED` (405) is a 
+registered code covering exactly a conformance-class refusal:
 
 | Code | HTTP | Description |
 |---|---|---|
@@ -3975,6 +4118,21 @@ Issues identified through scenario stress-testing and systematic review.
 | ~~A35~~ | HTTP authentication | New Section 12.8: PhIP-Capability is the only protocol-level auth scheme; mTLS is a transport overlay (does not replace event signatures); non-protocol endpoints free to use any scheme; basic/bearer/API-key MUST NOT route restricted reads or writes |
 | ~~A36~~ | Conformance levels | Section 13 restructured into four classes (Full / Read-Only / Mirror / Client-Only); new `OPERATION_NOT_SUPPORTED` (405) error code; new `conformance_class` field in `/meta` |
 | ~~A37~~ | Schema versioning | New Section 8.4: semver MAJOR.MINOR with explicit additive vs. breaking change rules, versioned `$id` URLs, `version` field in schemas (all v0.1 schemas seeded at 1.0), advertise via `/meta.schema_namespaces`, 12-month minimum compatibility window |
+| ~~A43~~ | No `key_id`→`actor` binding (signature attributable to any key holder) | §11.1.1: normative binding (same authority + self-key or `signing_key_for` relation, §7.1); enforced on write and verify; replaces the undefined `delegated_signing_for` |
+| ~~A44~~ | §11.2.2 "valid iff active" contradicted "historical events remain valid"; revocation not durable | Validity scoped to event timestamp; `revoked_at` on `phip:keys`; reject events dated ≥ `revoked_at`; no reactivating revoked/expired keys; caching (§11.2.5) must observe revocation |
+| ~~A45~~ | Delegation trust bridge was an unsigned `/meta` field (web-server compromise → namespace hijack) | §4.5.1: delegation entries root-key signed; §4.5.2 verifies the signature; dropped the unbacked "`/meta` is a PhIP object with history" claim; `meta.json` → 1.3 |
+| ~~A46~~ | Conflicting `authority_transfer` events had no tiebreak | §4.6.3 check 6: first-transfer-wins per namespace, ordered by the source authority record's hash chain |
+| ~~A47~~ | Forked-history mirror undetectable once source DNS dies | §4.6.5 + `/meta.predecessor_root_keys` (§12.7): the live successor publishes an independent anchor for the source root key |
+| ~~A48~~ | §11.5.2 step-4 `granted_to` match broke `authenticated` policy and the `"*"` topology flow | Step 4 does token-intrinsic checks only; the `granted_to` match runs once, at step 7 |
+| ~~A49~~ | `granted_to: "*"` danger controls were issuer-advice only | §11.3.4 step 3: resolver MUST reject `"*"` tokens with push/`read_history`/`read_query` scope; `"*"` honored only for `read_topology`/`read_state` |
+| ~~A50~~ | Topology signature had no freshness/completeness binding (replay + truncation) | §11.5.6.4: signed object now covers `served_at` + `next_cursor` (six fields); client freshness check; `topology-response.json` → 1.2 |
+| ~~A51~~ | `DUPLICATE_EVENT` dedup absent from the §12.3 order, breaking the §12.3.2 idempotency guarantee | §12.3: dedup runs before chain-continuity, keyed on successfully-appended events only |
+| ~~A52~~ | QUERY ACL filtering MUST vs optional; `total` could leak restricted-object existence | §12.4.5 filtering is MUST (aligned with §11.5.3); §12.4.4 `total` excludes objects the caller cannot read |
+| ~~A53~~ | §13.2 "there is no PhIP error code for this case" contradicted the registry | Corrected wording; emitting `OPERATION_NOT_SUPPORTED` (405) is MUST, matching §12.5.4 / §13.3 |
+| ~~A54~~ | No terminal path without passing `qualified` (couldn't abandon a concept/design/prototype) | §9.2.1: added `concept`/`design`/`prototype` → `disposed` abandon edges |
+| ~~A55~~ | `identity` declared a projection but no event could write it | §5.2.2: `attribute_update` with reserved namespace `"identity"`; carries §5.2.1 corrections and §6.4.1 quantity draw-down |
+| ~~A56~~ | Conservation tolerance ε defined three inconsistent ways, SHOULD under a MUST-reject | §10.4.1 yield ε fixed at `1e-6`; §10.5.1 lot ε = coarsest declared `precision` else `1e-6 × Q` — deterministic and normative |
+| ~~A57~~ | Lot transition semantics, multi-input yield, process host, design states, CREATE terminal, software_update, RFC 9421, CHAIN_CONFLICT scope | §10.5 (split/merge effect the `consumed` transition), §10.4.1 per-input `yields`, §10.4 `process` host = `outputs[0]`, §6.2 (design not `deployed`/`maintained`), §12.1 (no terminal initial state), §10.2 (`software_update` projection), §11.6.2 (content-digest recompute + replay cache), §11.5.4 (`read_topology` in the head-suppression carve-out) |
 
 ### A.2 Open Issues — Post-v0.1
 
