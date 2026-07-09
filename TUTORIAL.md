@@ -103,10 +103,10 @@ operations:
 
 | What you typed | Spec section | What happened on the wire |
 |---|---|---|
-| `phip key register` | §6.1, §11.2.4 | POST a self-signed `created` event for your actor — required so the server can resolve your future signatures |
-| `phip object new` | §6.1 | POST a signed `created` event with `object_type` + `state` in the payload |
-| `phip log ... <file>` | §6.3, §11.4.2 | PUT the file as a content-addressed blob; GET the object's current head; POST a signed `measurement` event referencing the blob's content_hash |
-| `phip show` | §6.2 | GET the object's current state + history tail |
+| `phip key register` | §12.1, §11.2.4 | POST a self-signed `created` event for your actor — required so the server can resolve your future signatures |
+| `phip object new` | §12.1 | POST a signed `created` event with `object_type` + `state` in the payload |
+| `phip log ... <file>` | §12.3, §11.4.2 | PUT the file as a content-addressed blob; GET the object's current head; POST a signed `measurement` event referencing the blob's content_hash |
+| `phip show` | §12.2 | GET the object's current state + history tail |
 | `phip verify` | §11.1, §11.2 | GET the full history; re-walk the hash chain locally; re-verify every signature against the resolved actor JWK |
 | `phip bundle pack` | §4.3.4 | Fetch the chain, sign a manifest, pack into a tar — same structure any other PhIP implementation will accept |
 
@@ -124,9 +124,13 @@ PhIP rests on three primitives, all in the spec under §10–§11:
    embeds a JWK. That's why you needed `phip key register` — without
    the actor object, no one can verify your signatures.
 
-3. **Hash-chained history.** Every event's `previous_hash` equals
-   `sha256("sha256:" + JCS(prev_event_with_signature))`. Walking the
-   chain proves nothing has been silently edited.
+3. **Hash-chained history.** Every event's `previous_hash` is
+   `"sha256:"` followed by the hex SHA-256 of the JCS-canonicalized
+   previous event (signature included) — i.e.
+   `"sha256:" + hex(sha256(JCS(prev_event_with_signature)))`. The
+   `sha256:` prefix labels the hex digest; it is not part of the
+   hashed bytes. Walking the chain proves nothing has been silently
+   edited.
 
 Everything else — federation, capability tokens, lifecycle states,
 typed attributes, bundles — is built on these three.

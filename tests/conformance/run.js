@@ -1041,9 +1041,13 @@ async function main() {
 
     if (rMeta.body.successor && rMeta.body.successor.authority) {
       const succ = rMeta.body.successor;
-      const probeNs = (succ.namespaces && succ.namespaces[0]) || "any";
-      if (probeNs === "*") {
-        console.log("  (skipped successor probe — wildcard namespaces, no test target)");
+      // `namespaces` is optional on /meta.successor (§12.7 lists only
+      // authority/transfer_event_id/effective_from); the authoritative list
+      // lives in the authority_transfer event. Without a concrete namespace
+      // here we have no target to probe, so skip rather than guess.
+      const probeNs = succ.namespaces && succ.namespaces[0];
+      if (!probeNs || probeNs === "*") {
+        console.log("  (skipped successor probe — no concrete namespace in /meta.successor)");
       } else {
         const rXfer = await request("GET", RESOLVE(probeNs, "probe-" + RUN_ID));
         test(
@@ -1129,7 +1133,8 @@ async function main() {
     }
     test("topology chain walk: previous_hash links match event_hashes", walkOk);
 
-    // Topology signature: covers JCS({disclosure, page_length, phip_id, topology}).
+    // Topology signature: covers JCS({disclosure, next_cursor, page_length,
+    // phip_id, served_at, topology}) — the six canonical envelope fields (§11.5.6.4).
     const sig = body && body.topology_signature;
     test(
       "topology_signature object present with algorithm/key_id/value",
@@ -1139,8 +1144,10 @@ async function main() {
     if (sig && sig.key_id) {
       const canonicalSigned = {
         disclosure: body.disclosure,
+        next_cursor: body.next_cursor ?? null,
         page_length: body.page_length,
         phip_id: body.phip_id,
+        served_at: body.served_at,
         topology: body.topology,
       };
       const signedBytes = Buffer.from(canonicalize(canonicalSigned), "utf8");
@@ -1309,8 +1316,10 @@ async function main() {
     if (sigA && sigA.key_id) {
       const canonicalSignedA = {
         disclosure: bodyA.disclosure,
+        next_cursor: bodyA.next_cursor ?? null,
         page_length: bodyA.page_length,
         phip_id: bodyA.phip_id,
+        served_at: bodyA.served_at,
         topology: bodyA.topology,
       };
       const signedBytesA = Buffer.from(canonicalize(canonicalSignedA), "utf8");
@@ -1400,7 +1409,48 @@ async function main() {
   process.exit(fail === 0 ? 0 : 1);
 }
 
+// Connection-level failures (server down, DNS miss, TLS reset) surface as
+// a fetch TypeError with a `cause` carrying the underlying syscall code.
+// Report those as a clear "server unreachable" message rather than dumping
+// a stack trace that looks like a bug in the suite itself.
+const CONNECT_ERROR_CODES = new Set([
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "EAI_AGAIN",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "UND_ERR_CONNECT_TIMEOUT",
+]);
+
+// Walk the `cause` chain AND any AggregateError `errors` array — a
+// multi-address connect failure (e.g. localhost resolving to both ::1 and
+// 127.0.0.1) arrives as an AggregateError whose top-level `code` is unset
+// but whose member errors carry the real codes.
+function connectErrorCode(err) {
+  const seen = new Set();
+  const stack = [err];
+  while (stack.length) {
+    const e = stack.pop();
+    if (!e || typeof e !== "object" || seen.has(e)) continue;
+    seen.add(e);
+    if (e.code && CONNECT_ERROR_CODES.has(e.code)) return e.code;
+    if (e.cause) stack.push(e.cause);
+    if (Array.isArray(e.errors)) for (const sub of e.errors) stack.push(sub);
+  }
+  return null;
+}
+
 main().catch((err) => {
+  const code = connectErrorCode(err);
+  if (code) {
+    console.error(
+      `\nCould not reach the resolver at ${BASE_URL} (${code}).\n` +
+        `Check that the server is running and the base URL is correct, then re-run.`,
+    );
+    process.exit(2);
+  }
   console.error("conformance suite crashed:", err);
   process.exit(2);
 });

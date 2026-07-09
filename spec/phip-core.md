@@ -135,8 +135,12 @@ A PhIP Object record MUST be transferable across system and organizational
 boundaries without loss of meaning or provenance.
 
 **G3 — Tamper-Evident History**  
-It MUST be possible for any party to verify that an object's history has not 
-been altered after the fact.
+It MUST be possible for any party to verify that the events an authority 
+serves for an object have not been *modified* after the fact — any change to 
+a retained event breaks the hash chain and is detectable. Detecting 
+*withheld* (truncated) tail events is a weaker guarantee: it requires a 
+previously-observed or out-of-band chain head, since a valid prefix is 
+indistinguishable from the whole chain to a first-time reader (§14).
 
 **G4 — Cross-Org Trust Without Bilateral Setup**  
 Any party MUST be able to verify the authenticity of an event without a 
@@ -466,7 +470,12 @@ document (§12.7) under a new `delegations` field:
       "delegate_root_key": "phip://logistics-eu.partner.example/keys/root",
       "scope": ["create", "push", "get", "history", "query"],
       "effective_from": "2026-04-01T00:00:00Z",
-      "expires": "2027-04-01T00:00:00Z"
+      "expires": "2027-04-01T00:00:00Z",
+      "signature": {
+        "algorithm": "Ed25519",
+        "key_id": "phip://parent.example/keys/root",
+        "value": "base64url:..."
+      }
     }
   ]
 }
@@ -482,6 +491,16 @@ document (§12.7) under a new `delegations` field:
 | `effective_from` | MUST | ISO 8601 timestamp the delegation begins |
 | `expires` | MAY | Optional expiry; an absent `expires` indicates an open-ended delegation |
 | `revocable` | MAY | Boolean. If `true`, the parent authority may revoke the delegation by removing the entry from its metadata document. Default `true` |
+| `signature` | MUST | Ed25519 signature by the parent authority's **root key** (§4.6.1) over the JCS canonicalization (§10.3) of the delegation entry with the `signature` field removed. `key_id` MUST be the parent's root key and MUST satisfy the §11.1.1 binding for the parent authority. This signature is the cryptographic trust bridge of §4.5.2 — without it the entry is unauthenticated data in an unsigned `/meta` document, and a compromise of the parent's web server alone (short of its cold-storage root key) could forge a cross-authority redirect and hijack the namespace |
+
+The `signature` binds the delegation to the parent's root key — the same 
+anchor that authorizes an `authority_transfer` (§4.6.2). Delegation and 
+transfer therefore have symmetric trust requirements: both cross-authority 
+primitives require a root-key signature, and neither can be forged by an 
+attacker who controls only the parent's operational infrastructure. A 
+verifier MUST recompute the JCS of the entry (minus `signature`) and verify 
+it against the parent's root key before honoring the delegation for any 
+purpose (resolution, redirect, or write routing).
 
 #### 4.5.2 Resolution Under Delegation
 
@@ -494,9 +513,11 @@ SHOULD:
    The redirect MUST be accompanied by a `PhIP-Delegation: 
    <delegation-namespace>` header so the client knows the basis 
    for the cross-authority redirect.
-3. Verify the delegate's responses by chaining trust from the 
-   parent's root key to the delegate's root key (the delegation 
-   entry in the parent's `/meta` constitutes the trust bridge).
+3. Verify the delegation entry's `signature` against the parent's 
+   root key (§4.5.1), then chain trust from the parent's root key to 
+   the delegate's root key. The **signed** delegation entry — not its 
+   mere presence in `/meta` — constitutes the trust bridge; an entry 
+   whose signature does not verify MUST be treated as absent.
 4. Cache the delegation per `Cache-Control` headers; re-fetch on 
    `effective_from`/`expires` boundary or on cache invalidation.
 
@@ -512,16 +533,19 @@ hop. Clients receiving such a redirect MUST:
 1. Fetch the parent's `/meta` document if not already cached.
 2. Locate a `delegations` entry whose `namespace`, optional `prefix`, 
    and `effective_from`/`expires` window cover the request.
-3. Verify the entry's `delegate_authority` matches the redirect 
+3. Verify the entry's `signature` against the parent's root key 
+   (§4.5.1). An entry with a missing or invalid signature MUST be 
+   treated as absent.
+4. Verify the entry's `delegate_authority` matches the redirect 
    target's host and the entry's `scope` includes the operation 
    being attempted.
-4. If any check fails, treat the redirect as if it crossed authority 
+5. If any check fails, treat the redirect as if it crossed authority 
    boundaries without justification — abort the request and surface 
    a transport-layer error (§4.3.3).
 
-A `PhIP-Delegation` header without a corresponding `delegations` entry 
-in the parent's `/meta` MUST be treated as if absent. Clients MUST 
-NOT follow the redirect on faith.
+A `PhIP-Delegation` header without a corresponding **signed** 
+`delegations` entry in the parent's `/meta` MUST be treated as if 
+absent. Clients MUST NOT follow the redirect on faith.
 
 #### 4.5.3 Writes Under Delegation
 
@@ -553,19 +577,32 @@ Revocation of a delegation is a metadata change at the parent's
   it just stops accepting new events under the parent's authority 
   for that slice.
 
-Resolvers SHOULD log delegation revocations and SHOULD make them 
-visible via `/meta` history (an authority's `/meta` document is 
-itself addressable as a PhIP object — its event history records 
-delegation lifecycles).
+Resolvers SHOULD record delegation lifecycle events (grant, 
+revocation) as events on the authority record 
+(`phip://{authority}/.well-known/authority`, §4.6.2) — a real, 
+hash-chained PhIP object — so the history of who was delegated what, 
+and when it was revoked, is itself tamper-evident. (Earlier drafts 
+described the `/meta` document as "itself a PhIP object with event 
+history"; `/meta` is an unsigned capability document, §12.7, with no 
+such history — the authority record is the correct home for 
+authority-level lifecycle events. Signed delegation entries, §4.5.1, 
+carry the per-entry authenticity; the authority record carries the 
+audit trail.)
 
 #### 4.5.5 Sub-Delegation
 
-A delegate MAY further delegate its slice if its root key is used to 
-sign the sub-delegation entry in its own `/meta`. Sub-delegation 
-chains MUST NOT exceed the depth permitted by the original parent. 
-The original parent MAY constrain depth via a `max_subdelegation` 
-field on the delegation entry; absence means unlimited depth, which 
-is RECOMMENDED only for trusted partner relationships.
+A delegate MAY further delegate its slice by publishing a 
+sub-delegation entry in its own `/meta`, signed by *its* root key 
+(the same `signature` mechanism as §4.5.1). Because every entry in 
+the chain is root-key-signed, the depth bound is enforceable: the 
+original parent MAY constrain depth via a `max_subdelegation` field 
+on its (signed) delegation entry, and a verifier walking the chain 
+MUST reject any sub-delegation whose declared `max_subdelegation` 
+exceeds (parent's `max_subdelegation` − 1). Absence of 
+`max_subdelegation` means unlimited depth, which is RECOMMENDED only 
+for trusted partner relationships. A sub-delegation entry whose 
+signature does not verify against the delegating party's root key 
+MUST be treated as absent.
 
 ### 4.6 Authority Transfer
 
@@ -668,11 +705,28 @@ the source and successor authorities MUST verify:
    successor's root key.
 5. The transfer event's `successor_authority` matches the authority 
    serving the post-transfer events.
+6. **First-transfer-wins.** The transfer event is the *first* validly 
+   signed transfer of the requested namespace in the source authority 
+   record's hash chain. A namespace may be transferred by a given 
+   authority at most once; if a verifier observes two validly signed 
+   `authority_transfer` events from the same source covering the same 
+   namespace, the one appearing earlier in the authority record's chain 
+   (§4.6.2) binds and any later one MUST be treated as void. Because the 
+   authority record is an append-only, hash-chained PhIP object, its 
+   ordering is authenticated — this gives a deterministic tiebreak even 
+   when a *later* root-key compromise produces a second, cryptographically 
+   valid but illegitimate transfer.
 
 If any of these checks fail, the client MUST reject the chain as 
-non-authentic. Implementations SHOULD cache root key fingerprints out 
-of band (e.g., trust-on-first-use with explicit pinning for 
-high-stakes deployments) to mitigate the risk of root key compromise.
+non-authentic. To make check 2/3 and the first-transfer-wins rule 
+enforceable even after the source's DNS is gone, verifiers MUST obtain 
+the source authority's root-key fingerprint from an anchor **not served 
+by the party under verification** — either an out-of-band pin 
+(trust-on-first-use with explicit pinning for high-stakes deployments), 
+or the successor's `/meta.predecessor_root_keys` (§4.6.5, §12.7), which 
+the live successor publishes under its own DNS. A fingerprint learned 
+only from the mirror or successor-forwarded chain being verified is not 
+an independent anchor.
 
 #### 4.6.4 Redirects After Transfer
 
@@ -705,8 +759,20 @@ MUST set `Cache-Control: public, immutable` and SHOULD set a long
 
 A client that retrieves an object from a mirror MUST verify the 
 authority-transfer chain back to the original authority record, not 
-just the local hash chain. This prevents a malicious mirror from 
-serving a forked history.
+just the local hash chain. This only prevents a malicious mirror from 
+serving a forked history if the source root-key fingerprint used to 
+check the transfer signature comes from an **independent anchor** — not 
+from the mirror itself. Since the source's DNS is typically dead by the 
+time a mirror is in use, the anchor is the successor's 
+`/meta.predecessor_root_keys` (§12.7): the live successor, under its own 
+authenticated DNS + TLS, publishes the fingerprint(s) of the 
+predecessor root key(s) it received transfers from. A verifier fetches 
+that fingerprint from the successor, then verifies the mirror-served 
+transfer event's signature against a key matching it. Without this, a 
+malicious mirror could serve a forked history *and* a fabricated source 
+root key that signs it — every local check would pass against the 
+attacker's own anchor. Verifiers that pinned the source root key out of 
+band before DNS death SHOULD prefer that pin.
 
 #### 4.6.6 Multiple Transfers
 
@@ -776,6 +842,37 @@ informational and MUST NOT be used as the primary identifier in place of
 ```
 
 [TODO: define additional standard identity fields]
+
+#### 5.2.2 Mutating the Identity Block
+
+Like every other top-level field, `identity` is a projection of the 
+event history (§5.1) and MUST NOT be edited in place. The `created` 
+event sets the initial identity. After creation, identity fields are 
+changed by an **`attribute_update` event carrying the reserved 
+`namespace` value `"identity"`** — the one non-namespaced target 
+`attribute_update` accepts. Its `updates` object merges into the 
+`identity` block: a present key sets that field, and an explicit `null` 
+removes it.
+
+```json
+{
+  "type": "attribute_update",
+  "payload": {
+    "namespace": "identity",
+    "updates": {
+      "serial": "QCT88421-0042",
+      "serial_quality": { "confidence": "high", "source": "manufacturer_label_scan", "corrected_from": "QCT88421-0041" }
+    }
+  }
+}
+```
+
+This is how a legacy-onboarding correction (§5.2.1 `corrected_from`) and 
+a lot's `identity.quantity` draw-down (§6.4.1) are recorded — both were 
+previously described as `attribute_update`s but had no defined target 
+for the non-namespaced `identity` block. The shorthand of §6.4.1.1 
+(`quantity_<unit>`) is likewise carried in the `updates` of an 
+`identity`-namespaced `attribute_update`.
 
 #### 5.2.1 Uncertainty Qualifiers
 
@@ -909,6 +1006,15 @@ The states map to design release status:
   this revision but existing instances remain valid
 - `consumed` / `disposed` — design is retired
 
+A `design` object has no physical instance, so a resolver MUST reject 
+any `state_transition` that would place a `design` into `deployed` or 
+`maintained`: those states denote a physical unit in service (§9.2), 
+which a design never is. The `stock → deployed` and `deployed ↔ 
+maintained` edges of the §9.2.1 table therefore do not apply to 
+`object_type: design`; a released design remains in `stock` until 
+`decommissioned`. (This is a per-type narrowing of the track, alongside 
+the abandon edges of §9.2.1.)
+
 Design revisions are separate `design` objects, linked via the 
 `supersedes` relation (Section 7.1). A new revision does not invalidate 
 physical objects that `instance_of` the prior revision; their 
@@ -964,7 +1070,7 @@ A lot's `identity.quantity` field is an object with these fields:
 | `value` | MUST | Numeric quantity. MUST be ≥ 0 |
 | `unit` | MUST | SI unit symbol (`kg`, `g`, `m`, `L`, `units`, etc.) |
 | `as_of` | SHOULD | ISO 8601 timestamp of the most recent measurement |
-| `precision` | MAY | Quantity precision (e.g., `0.001` for milligram precision on a kg-scale). Used as the conservation tolerance `ε` in §10.5.1 |
+| `precision` | MAY | Quantity precision (e.g., `0.001` for milligram precision on a kg-scale). Feeds the conservation tolerance `ε` in §10.5.1: when participating lots declare `precision`, `ε` is the coarsest declared value; absent any declaration, `ε = 1e-6 × Q` |
 
 The current quantity is a projection of the event history. Each 
 `lot_split`, `lot_merge`, and `attribute_update` that changes the 
@@ -1022,6 +1128,7 @@ PhIP Objects. Each relation is a tuple of (type, phip_id).
 | `instance_of` | — | Subject is a physical instance of a design. Target MUST be of type `design` (Section 6.3) |
 | `supersedes` | `superseded_by` | Subject `design` revision replaces an older `design`. Both endpoints MUST be of type `design` |
 | `manufactured_by` | — | Subject was produced by the object. Object MUST be of type `actor` |
+| `signing_key_for` | — | Asserted by a key resource (an `actor` object holding `phip:keys`); names an `actor` this key is authorized to sign events and capability tokens for. Subject (the key) and target (the actor) MUST share the same authority. Establishes the `key_id`→`actor` binding of §11.1.1 |
 
 ### 7.2 Relation Format
 
@@ -1406,22 +1513,30 @@ An `actor` object MUST NOT use manufacturing track states, and a
 | `maintained` | Temporarily removed from service for maintenance |
 | `decommissioned` | Permanently removed from service |
 | `consumed` | Subdivided, transformed, or absorbed into another object (lot splits, process inputs). The original identity no longer exists as a discrete unit but was not destroyed |
-| `disposed` | Physically destroyed or scrapped |
+| `disposed` | Physically destroyed or scrapped, **or abandoned before reaching production** — a cancelled concept/design or a failed, discarded prototype. Terminal |
 
 #### 9.2.1 Manufacturing Track Transitions
 
 A resolver MUST reject any event that attempts an invalid state transition.
 
 ```
-concept        → design
-design         → prototype, qualified
-prototype      → design, qualified
+concept        → design, disposed
+design         → prototype, qualified, disposed
+prototype      → design, qualified, disposed
 qualified      → stock, consumed
 stock          → deployed, decommissioned, consumed
 deployed       → maintained, decommissioned
 maintained     → deployed, decommissioned
 decommissioned → consumed, disposed
 ```
+
+The `→ disposed` edges from `concept`, `design`, and `prototype` are the 
+**abandon/cancel** path: a concept or design that is killed, or a 
+prototype that fails validation and is scrapped, transitions directly 
+to `disposed` (terminal) without first being falsely marked `qualified` 
+("approved for production"). Without these edges the only route to a 
+terminal state ran through `qualified`, forcing an operator to record a 
+false approval in order to retire a rejected object.
 
 `consumed` and `disposed` are terminal states. Objects in a terminal state 
 MUST remain resolvable but MUST NOT accept further events.
@@ -1520,7 +1635,7 @@ Each event MUST contain:
 | `attribute_update` | One or more attribute values changed |
 | `relation_added` | A relation was added |
 | `relation_removed` | A relation was removed |
-| `software_update` | Software or firmware updated. `payload` MUST include `from` and `to` |
+| `software_update` | Software or firmware updated. `payload` MUST include `from` and `to`. Projects onto `attributes.phip:software` exactly as an `attribute_update` to that namespace would (setting the relevant version/firmware field to `to`); it is a named specialization for the common firmware/software-version case, not a separate projection target |
 | `measurement` | A measurement or inspection result recorded |
 | `process` | A transformation that consumes N input objects and produces M output objects, with optional yield ratios. See 10.4 |
 | `lot_split` | A lot was divided into two or more new lots. See 10.5 |
@@ -1586,6 +1701,18 @@ processing, and similar transformations.
 }
 ```
 
+**Host object.** Unlike `lot_split` (which is pushed to the lot being 
+split), a `process` event has N inputs and M outputs and so needs an 
+explicitly designated host — the single object whose history it lives 
+in, per the `phip_id` field required of every event (§10.1). The 
+`process` event's `phip_id` (its host) MUST be `outputs[0].phip_id` — 
+the primary output — and the other outputs reference the transformation 
+via `derived_from`. A process with no output (pure teardown) is instead 
+hosted on `inputs[0].phip_id`. This gives resolvers a deterministic 
+place to store and require the event, and ensures a **corrective** 
+`process` event (§10.4.2) always has a live, non-terminal host (a 
+primary output), never a `consumed` input.
+
 When an input is marked `"consumed": true`, a corresponding `state_transition` 
 event to `consumed` SHOULD be pushed to that input object. Output objects 
 SHOULD have `derived_from` relations pointing to all input objects. 
@@ -1600,28 +1727,53 @@ relations) are the pushing actor's responsibility and may fail independently.
 Full cross-namespace atomicity (two-phase commit or saga patterns) is 
 deferred to a future version of this specification.
 
-The `yield_fraction` field is OPTIONAL and represents the mass fraction of 
-the input that contributed to this output. This enables proportional 
-provenance tracking for regulated materials.
+The `yield_fraction` field is OPTIONAL. The scalar form shown above 
+represents the mass fraction of a **single** input that contributed to 
+this output, and is well-defined only when the output `derived_from` 
+exactly one input. When an output is derived from **multiple** inputs 
+(as `gold-batch-0042` above, recovered from two servers), a single 
+scalar cannot say what fraction came from which input — it would be 
+counted in full against *every* input's conservation sum, asserting the 
+output is simultaneously that fraction of each. For multi-input outputs 
+an authority SHOULD use the expanded per-input form instead:
+
+```json
+{ "phip_id": "phip://recycler.com/materials/gold-batch-0042",
+  "yields": [
+    { "input": "phip://recycler.com/intake/server-SN042", "fraction": 0.0002 },
+    { "input": "phip://recycler.com/intake/server-SN043", "fraction": 0.0002 }
+  ] }
+```
+
+`yields` and the scalar `yield_fraction` are mutually exclusive on a 
+given output; the scalar is shorthand for a single-input `yields` entry. 
+This enables proportional provenance tracking for regulated materials 
+without the double-counting the scalar form causes across multiple 
+inputs.
 
 #### 10.4.1 Yield Fraction Semantics
 
-When `yield_fraction` is supplied on outputs, the values MUST be 
-non-negative real numbers in the closed interval `[0, 1]`.
+When `yield_fraction` (or a `yields[].fraction`) is supplied on outputs, 
+the values MUST be non-negative real numbers in the closed interval 
+`[0, 1]`.
 
-The yield fractions on outputs that share a single input describe how 
-that input was distributed across outputs. For each input referenced 
-by one or more outputs, the sum of `yield_fraction` values on outputs 
-that point at that input via `derived_from` MUST satisfy:
+The yield fractions describe how each input was distributed across 
+outputs. For each input, the sum — over all outputs — of the fraction 
+attributed to *that input* (a scalar `yield_fraction` on a single-input 
+output, or the matching `yields[].fraction` entry on a multi-input 
+output) MUST satisfy:
 
 ```
 sum(yield_fraction_i) ≤ 1.0 + ε
 ```
 
-where `ε` is a small rounding tolerance. Authorities SHOULD use 
-`ε = 1e-6`. A sum strictly less than 1 is permitted — it represents 
-material loss (slag, scrap, evaporation) that is not tracked as a 
-distinct output.
+where `ε` is a fixed rounding tolerance. For yield-fraction sums `ε` is 
+**exactly `1e-6`** (not resolver-configurable) — a single normative value 
+so that every resolver, including a Read-Only replica revalidating a 
+served event (§13.2), reaches the identical accept/reject verdict on the 
+same signed event. A sum strictly less than 1 is permitted — it 
+represents material loss (slag, scrap, evaporation) that is not tracked 
+as a distinct output.
 
 A sum exceeding `1 + ε` MUST be rejected by the resolver with 
 `INVALID_EVENT` (422). Sums exceeding 1 imply mass duplication, which 
@@ -1655,9 +1807,28 @@ lost or unaccounted material as an explicit output).
 
 Lots may be split or merged during their lifecycle.
 
+**Transition semantics.** A `lot_split`/`lot_merge` event *is itself* 
+the transition of the consumed lot(s) to `consumed` — the resolver 
+applies the `→ consumed` state change as part of processing the lot 
+event. A separate `state_transition` event MUST NOT be required and 
+SHOULD NOT be emitted (this differs from `process`, §10.4, where the 
+consumed transition on inputs is a separate SHOULD). The resolver MUST 
+enforce that `consumed` is reachable from the lot's current state per 
+the §9.2.1 table: a lot must be in `qualified`, `stock`, or 
+`decommissioned` to be split or merged. A `deployed` lot MUST first 
+transition to `decommissioned`; a lot already in a terminal state MUST 
+be rejected with `TERMINAL_STATE` (409). Because the lot event carries 
+the final quantity accounting in its own payload (the `resulting_lots` / 
+`source_lots` quantities), no post-`consumed` `attribute_update` to the 
+now-terminal lot is needed or permitted — the projection of 
+`identity.quantity` for a consumed lot is fixed at the split/merge. Any 
+corrective accounting after the fact is recorded on a *non-terminal* 
+object (a resulting lot, or a corrective `process` event whose host is a 
+live output — §10.4.2), never on the consumed lot.
+
 **Lot Split:** A `lot_split` event is pushed to the original lot. The 
-original lot transitions to `consumed`. New lots are created with 
-`derived_from` relations pointing to the original.
+original lot transitions to `consumed` (per the semantics above). New 
+lots are created with `derived_from` relations pointing to the original.
 
 ```json
 {
@@ -1724,10 +1895,24 @@ Mergers that introduce mass (e.g., adding a non-tracked filler) MUST
 NOT use `lot_merge`; a `process` event with the filler as an explicit 
 input is the correct representation.
 
-**Tolerance.** `ε` SHOULD be set to the smaller of:
-- 0.1 % of the source quantity, or
-- the unit precision of the relevant measurement (e.g. ε = 1g for 
-  measurements taken on a gram-precision scale).
+**Tolerance.** `ε` MUST be computed deterministically so that every 
+resolver — including a Read-Only replica revalidating a served event 
+(§13.2) — reaches the identical verdict on the same signed event:
+
+- If **any** participating lot's quantity carries a `precision` (§6.4.1), 
+  `ε` is the **coarsest** (largest) such declared `precision` across all 
+  participants. This is the single interpretation of "precision as ε" — 
+  earlier drafts gave two conflicting rules (§6.4.1 said ε *equals* 
+  `precision`; this section said `min(0.1 % of source, precision)`); the 
+  coarsest-declared-precision rule supersedes both.
+- If **no** participant declares a `precision`, `ε = 1e-6 × Q`, where `Q` 
+  is the source quantity for a split and the resulting quantity for a 
+  merge.
+
+`ε` is not otherwise resolver-configurable for conservation checks. 
+(This matters because the conservation *rejection* is a MUST — §10.5.1 
+below — so the threshold it turns on cannot be left to per-resolver 
+discretion.)
 
 Resolvers MUST validate conservation only when **all** participating 
 lots carry comparable quantity fields. Splits or merges between lots 
@@ -1761,6 +1946,50 @@ over the canonical JSON serialization of the event object excluding the
 The `key_id` MUST be a resolvable PhIP URI returning a public key resource. 
 Verifiers resolve the key and verify locally. No online verification step 
 is required.
+
+#### 11.1.1 Key Authorization (`key_id` ↔ `actor` binding)
+
+A verifying Ed25519 signature proves only that *some* holder of the 
+private key produced the bytes. It does **not**, on its own, prove that 
+the event is attributable to the `actor` named in the event. Without a 
+binding between `key_id` and `actor`, any holder of any valid key in an 
+authority could sign an event claiming to be any actor in that authority 
+(impersonation), defeating G4 and non-repudiation.
+
+A resolver accepting a write, and any verifier attributing an event to 
+its `actor`, MUST therefore establish that `key_id` is **authorized to 
+sign for** `actor`. Authorization holds if and only if BOTH of the 
+following are true:
+
+1. **Same authority.** `key_id` and `actor` share the same authority 
+   (the `{authority}` component of the two PhIP URIs is byte-identical). 
+   An authority governs both its actor records and its key resources, so 
+   this confines the binding to keys the actor's own authority controls. 
+   (In a cross-authority PUSH the *event's* `actor` and `key_id` are 
+   still same-authority as each other — both belong to the foreign 
+   pushing party; authorization to write into the target namespace is a 
+   separate check gated by the capability token, §11.3.)
+
+2. **Declared binding**, established by at least one of:
+   - **Self-key:** `key_id` == `actor` — the actor object is itself the 
+     key resource, carrying its `phip:keys` material inline. This is the 
+     natural pattern for IoT/device actors (§11.4) and for the 
+     bootstrap key (§11.2.4), which signs its own `created` event.
+   - **`signing_key_for` relation:** the key resource at `key_id` carries 
+     a `signing_key_for` relation (§7.1) whose target is `actor`. This 
+     lets an organization operate shared or rotating signing keys 
+     (e.g. `phip://droyd.com/keys/ops-signing-2026`) that sign on behalf 
+     of one or more distinct actors (e.g. 
+     `phip://droyd.com/actors/manufacturing-system`).
+
+If the cryptographic signature verifies but the `key_id`→`actor` 
+authorization does not hold, the resolver MUST reject the event with 
+`INVALID_SIGNATURE` (401): the signature is genuine but unattributable, 
+which is a verification failure, not merely a key-not-found condition.
+
+The same binding applies to capability tokens (§11.3.4): a token's 
+`signature.key_id` MUST be authorized (per this section) to sign for the 
+token's `granted_by` actor.
 
 ### 11.2 Key Resources
 
@@ -1806,6 +2035,7 @@ validity fields:
 | `x` | string | MUST | Public key, base64url-encoded |
 | `not_before` | string (ISO 8601) | MUST | Start of key validity window |
 | `not_after` | string (ISO 8601) | MUST | End of key validity window |
+| `revoked_at` | string (ISO 8601) | MAY | Present iff the key was revoked before its natural `not_after`. Signatures with `timestamp` ≥ `revoked_at` MUST be rejected (§11.2.2). Monotonic: once set it MUST NOT be removed or moved to a later time |
 
 Private keys MUST NOT appear in key resources. Only public keys are 
 published.
@@ -1814,30 +2044,69 @@ published.
 
 An event signature is valid if and only if:
 
-1. The `key_id` resolves to an `active` key resource
+1. `key_id` resolves to a key resource that was in the signing-capable 
+   state (`active`) **at the event's `timestamp`** — not merely at the 
+   time of verification. A key that has since rotated to `inactive` or 
+   `archived` does NOT retroactively invalidate signatures it produced 
+   while `active` and in-window. (Condition 1 is deliberately scoped to 
+   the event timestamp: a literal "resolves to an `active` key now" 
+   reading would make every chain fail the moment its signing key 
+   rotates or expires, which every key eventually does — see the note 
+   below.)
 2. The event's `timestamp` falls within the key's `not_before` / 
-   `not_after` window
-3. The cryptographic signature verifies against the public key
+   `not_after` window.
+3. If the key carries a `revoked_at` (revocation, below), the event's 
+   `timestamp` is strictly before `revoked_at`.
+4. The cryptographic signature verifies against the public key.
 
-A key transitions to `inactive` when revoked (compromised or 
-superseded). A key transitions to `archived` when it has expired and is 
-retained for historical verification only.
+**Revocation.** A key is revoked — on compromise or supersession — by 
+setting `revoked_at` on the key resource to the instant from which its 
+signatures are no longer trusted, and transitioning the key to 
+`archived`. Revocation is monotonic and permanent: once `revoked_at` is 
+set it MUST NOT be removed or moved to a later time, and a revoked key 
+MUST NOT be returned to `active` (§11.2.3). Signatures with `timestamp` 
+≥ `revoked_at` MUST be rejected with `KEY_EXPIRED` (401); signatures 
+strictly before `revoked_at` and within the validity window remain 
+valid, so legitimate historical events survive the later revocation of 
+a compromised key.
 
-Events signed before a key's `not_after` or before its transition to 
-`inactive` remain valid. Events signed after either boundary MUST be 
-rejected by the resolver.
+**Expiry.** A key that reaches `not_after` without being revoked 
+transitions to `archived` and is retained for historical verification 
+only. Events signed after `not_after` MUST be rejected. `archived` is a 
+verification-only state: an `archived` key MUST NOT sign new events and 
+MUST NOT return to `active`. (`inactive` remains available for a 
+*temporary, reversible* suspension of a still-trusted key, distinct from 
+revocation.)
+
+**Backdating caveat.** Because `timestamp` is self-asserted by the 
+signer (§10.1), revocation bounds a compromised key's *forward* reach 
+but cannot retract events an attacker backdates to before `revoked_at`. 
+On an honest live resolver the hash chain blocks insertion (the head has 
+moved); for offline bundles, mirrors, and forked histories there is no 
+such backstop. See §14 for this residual risk and its mitigations.
 
 #### 11.2.3 Key Rotation
 
 To rotate keys, an authority:
 
 1. Creates a new key object signed by the current active key
-2. Transitions the old key to `inactive` (if revoking) or allows it to 
-   expire naturally (if retiring)
+2. Transitions the old key: to expire naturally at `not_after` (→ 
+   `archived`) if retiring at end of life, or — if revoking early for 
+   compromise or supersession — sets `revoked_at` and transitions it to 
+   `archived` per §11.2.2
+
+A key that has been revoked (`revoked_at` set) or has passed `not_after` 
+MUST NOT be transitioned back to `active`. The `inactive → active` edge 
+of the operational track (§9.3.1) is available to actor objects 
+generally and to key resources under a *temporary* suspension, but a 
+resolver MUST reject any `state_transition` that would return a revoked 
+or expired key to `active`. Recovery from compromise is by issuing a 
+NEW key, never by un-revoking — otherwise revocation would not be 
+durable.
 
 Multiple keys MAY be `active` simultaneously during a rotation window. 
-Verifiers MUST accept signatures from any `active` key whose validity 
-window covers the event timestamp.
+Verifiers MUST accept signatures from any key that was `active`, 
+in-window, and not-yet-revoked at the event timestamp (§11.2.2).
 
 #### 11.2.4 Bootstrap Key
 
@@ -1856,11 +2125,19 @@ authority's bootstrap key) is outside the scope of this specification.
 
 #### 11.2.5 Key Caching
 
-Key resources change infrequently. Resolvers serving key objects SHOULD 
-return `Cache-Control: max-age=86400` (24 hours) or longer. Verifiers 
-SHOULD cache resolved keys aggressively and revalidate only when a 
-signature references an unknown `key_id` or when the cached key's 
-`not_after` has passed.
+Key resources change infrequently, but revocation (§11.2.2) MUST be able 
+to propagate — so caching cannot be unbounded. Resolvers serving key 
+objects SHOULD return `Cache-Control: max-age=86400` (24 hours) or 
+longer. Verifiers SHOULD cache resolved keys, but MUST bound cache 
+lifetime so revocation is observed: before accepting an event they have 
+not previously verified, verifiers MUST revalidate a cached key 
+(re-fetch its current resource, including any `revoked_at`) when the 
+cached copy is older than its `Cache-Control` max-age, and 
+unconditionally when a signature references an unknown `key_id` or when 
+the cached key's `not_after` has passed. Verifiers that pin a key out of 
+band (§4.6.3) MUST still consult `revoked_at`. A previously-verified 
+event need not be re-checked — its validity is fixed by the 
+event-timestamp rule of §11.2.2.
 
 ### 11.3 Capability Tokens
 
@@ -1895,7 +2172,7 @@ The token shape is defined by `schemas/capability-token.json`
 | `phip_capability` | string | MUST | Version. MUST be `"1.0"` |
 | `token_id` | string (UUID) | MUST | Unique identifier for this token |
 | `granted_by` | PhIP URI | MUST | The authority issuing the token. MUST be an `actor` in the target namespace |
-| `granted_to` | PhIP URI or `"*"` | MUST | The actor authorized to use this token. The literal string `"*"` grants the token to any presenter and disables the §11.5.2 step-7 actor match. Issuers SHOULD restrict `"*"` tokens to non-write, low-leakage scopes (notably `read_topology`); a `"*"` token with `read_history`, `read_query`, or any push scope is effectively a publication and SHOULD be rejected at policy-review time. Combining `granted_to: "*"` with `object_filter: "*"` (or any wildcard that matches the whole authority) yields a universal grant and SHOULD NOT be issued except when the authority explicitly intends an authority-wide public attestation; auditors checking issuance logs should flag this pattern. When `granted_to: "*"`, the token's `granted_by` SHOULD reference a key resource dedicated to public-attestation issuance (e.g., `phip://{authority}/keys/public-topology-2026`) rather than the authority root key, so the key can be rotated independently without disturbing other token classes. |
+| `granted_to` | PhIP URI or `"*"` | MUST | The actor authorized to use this token. The literal string `"*"` grants the token to any presenter and disables the §11.5.2 step-7 actor match. Issuers SHOULD restrict `"*"` tokens to non-write, low-leakage scopes (notably `read_topology`); a `"*"` token with `read_history`, `read_query`, or any push scope is effectively a publication and **MUST be rejected by the resolver at verification time** (§11.3.4 step 3) — `"*"` is honored only for `read_topology` and `read_state`. Combining `granted_to: "*"` with `object_filter: "*"` (or any wildcard that matches the whole authority) yields a universal grant and SHOULD NOT be issued except when the authority explicitly intends an authority-wide public attestation; auditors checking issuance logs should flag this pattern. When `granted_to: "*"`, the token's `granted_by` SHOULD reference a key resource dedicated to public-attestation issuance (e.g., `phip://{authority}/keys/public-topology-2026`) rather than the authority root key, so the key can be rotated independently without disturbing other token classes. |
 | `scope` | string | MUST | Permission granted. See 11.3.2 |
 | `object_filter` | string | MUST | Glob pattern matching target `phip_id`s. Uses `*` for wildcard |
 | `not_before` | string (ISO 8601) | MUST | Token validity start |
@@ -1952,12 +2229,26 @@ A resolver MUST verify the following before accepting a cross-org push,
 in order:
 
 1. Decode the token from the `Authorization` header
-2. Verify the token's `signature` by resolving the `key_id` and checking 
-   against the `granted_by` authority's public key
-3. Check that the current time falls within `not_before` / `expires`
-4. Check that the pushing actor's `phip_id` matches `granted_to`
-5. Check that the target object's `phip_id` matches `object_filter`
-6. Check that the event type is permitted by `scope`
+2. Verify the token's `signature` by resolving the `key_id`, confirming 
+   `key_id` is authorized to sign for `granted_by` per the §11.1.1 
+   binding rule, and checking the signature against that key
+3. **Anonymous-scope restriction.** If `granted_to` is the literal 
+   string `"*"`, the resolver MUST reject the token with 
+   `INVALID_CAPABILITY` (403) unless `scope` is `read_topology` or 
+   `read_state`. A presenter-anonymous token carrying `push_events`, 
+   `push_state`, `push_measurements`, `push_relations`, `read_history`, 
+   or `read_query` is a bearer secret that grants a high-leakage or 
+   write capability to anyone who obtains it, with the §11.6 caller 
+   binding disabled — it MUST NOT be honored regardless of issuance 
+   intent. (This is the normative, resolver-side enforcement of the 
+   §11.3.1 guidance; it is not left to policy review.)
+4. Check that the current time falls within `not_before` / `expires`
+5. Check that the pushing actor's `phip_id` matches `granted_to`. When 
+   `granted_to` is the literal string `"*"` (permitted only for the 
+   scopes allowed in step 3), this match is skipped — the token grants 
+   any presenter.
+6. Check that the target object's `phip_id` matches `object_filter`
+7. Check that the event type is permitted by `scope`
 
 If any check fails, the resolver MUST return `INVALID_CAPABILITY` (403). 
 If no token is presented on a cross-org push, the resolver MUST return 
@@ -2171,8 +2462,17 @@ order:
 3. If the policy is `authenticated` or `capability`, decode any 
    `Authorization: PhIP-Capability` header. If absent, reject with 
    `MISSING_CAPABILITY` (403).
-4. Verify the token signature, expiry, and `granted_to` per Section 
-   11.3.4 steps 1–4.
+4. Verify the token's signature, anonymous-scope restriction, and 
+   expiry per Section 11.3.4 steps 1–4 (decode, signature + §11.1.1 
+   `key_id`→`granted_by` binding, `granted_to: "*"` scope restriction, 
+   and validity window). Do **not** perform the 
+   `granted_to`-vs-requesting-actor match here (that is §11.3.4 step 5) 
+   — the match happens exactly once, at step 7 below, so the 
+   `authenticated`-policy carve-out ("regardless of `granted_to`", 
+   §11.5.1) and the `granted_to: "*"` skip apply correctly. (Performing 
+   it at step 4 as well would reject every `authenticated`-policy read 
+   and would kill the public `granted_to: "*"` topology flow of 
+   §11.5.6.6 before step 7's skip is ever reached.)
 5. Verify the token's `scope` covers the requested operation. The
    mapping is:
 
@@ -2231,9 +2531,13 @@ read its history. The chain head MUST NOT be exposed via metadata
 documents, error responses, or any other side channel that bypasses 
 the access policy. In particular, `CHAIN_CONFLICT` responses on PUSH 
 to a restricted object MUST NOT include `current_head` if the pushing 
-actor lacks a `read_state` or `read_history` scope; the resolver MUST 
-instead return `ACCESS_DENIED` (403) and require the pusher to obtain 
-read scope before retrying.
+actor lacks a `read_state`, `read_history`, **or `read_topology`** scope; 
+the resolver MUST instead return `ACCESS_DENIED` (403) and require the 
+pusher to obtain read scope before retrying. (`read_topology` is included 
+because the chain head is exactly the last entry's `event_hash` that 
+topology mode already discloses (§11.5.6.3) — withholding it from a 
+`read_topology` holder on conflict would be pure friction, since they can 
+read the identical value via `?disclosure=topology`.)
 
 The above restrictions do not apply to topology disclosure (§11.5.6).
 Topology mode is the canonical disclosed view of chain head and
@@ -2322,6 +2626,7 @@ the caller's scope permits.
   "phip_id": "phip://acme.example/projects/widget-v3",
   "page_length": 2,
   "disclosure": "topology",
+  "served_at": "2026-01-22T15:00:00Z",
   "topology": [
     {
       "event_id": "evt-9a0c...-...",
@@ -2366,17 +2671,27 @@ chain length would give every topology reader a stable fingerprint
 of the object (§11.5.6.7). Consumers walking paginated topology MUST
 count their own running total.
 
+The envelope also carries `served_at` (the ISO 8601 instant the
+resolver produced and signed the response) and `next_cursor` (the
+pagination cursor, or `null` on the last page). Both are **covered by
+the signature** (§11.5.6.4): `served_at` binds freshness so a replayed
+old page is detectable, and `next_cursor` binds completeness so a
+truncated pagination (a `null` cursor injected mid-chain) is
+detectable.
+
 ##### 11.5.6.4 Topology Signature and Chain Verification
 
 The `topology_signature` covers the JCS canonicalization of a
-**canonical signed object** containing exactly four fields drawn
+**canonical signed object** containing exactly six fields drawn
 verbatim from the response envelope:
 
 | Key | Source |
 |---|---|
 | `disclosure` | The string `"topology"` |
+| `next_cursor` | The envelope's `next_cursor` (a string, or `null` on the last page) — binds completeness |
 | `page_length` | The envelope's `page_length` integer |
 | `phip_id` | The envelope's `phip_id` string |
+| `served_at` | The envelope's `served_at` ISO 8601 instant — binds freshness |
 | `topology` | The envelope's `topology` array verbatim |
 
 (Listed above in their JCS-sorted order — UTF-16 code-unit ascending.
@@ -2386,45 +2701,56 @@ canonical form is shown here so implementers can produce test
 vectors.)
 
 Signing the envelope — not just the `topology` array — binds the
-array to the object it describes and to the disclosure mode it was
-returned under; otherwise a compromised resolver could re-attribute
-a valid signature to a different `phip_id`. The `key_id` MUST be a
-key resource (§11.2) of the authority serving the resolver,
-typically reached via the resolver-as-actor bootstrap pattern
-(§11.2.4).
+array to the object it describes, to the disclosure mode it was
+returned under, to the instant it was produced (`served_at`), and to
+its position in a paginated walk (`next_cursor`). Earlier drafts
+signed only `{disclosure, page_length, phip_id, topology}`; that
+version could be **replayed** (an old, validly-signed page served
+indefinitely, since nothing in the signed bytes fixed a time) and
+**truncated** (an unsigned `next_cursor` set to `null` mid-chain,
+silently hiding later events). Including `served_at` and `next_cursor`
+in the signed object closes both. The `key_id` MUST be a key resource
+(§11.2) of the authority serving the resolver, typically reached via
+the resolver-as-actor bootstrap pattern (§11.2.4).
 
-A response document MAY carry top-level fields beyond the canonical
-four (the topology-response schema declares
-`additionalProperties: true`). Verifiers MUST construct the signed
-object from EXACTLY the four canonical fields and MUST ignore any
-extras (e.g., resolver-emitted `served_at`, request IDs, debug
-hints). Including additional fields in the signed bytes would break
-verification at any conformant peer.
+A response document MAY carry top-level fields beyond these six (the
+topology-response schema declares `additionalProperties: true`).
+Verifiers MUST construct the signed object from EXACTLY the six
+canonical fields and MUST ignore any *other* extras (request IDs,
+debug hints). Including additional fields in the signed bytes would
+break verification at any conformant peer.
 
 Verification:
 
 1. Resolve `key_id` to the public key (§11.2).
-2. Construct the canonical signed object from the four fields named
-   above (`disclosure`, `page_length`, `phip_id`, `topology`).
+2. Construct the canonical signed object from the six fields named
+   above (`disclosure`, `next_cursor`, `page_length`, `phip_id`,
+   `served_at`, `topology`).
 3. JCS-canonicalize that object.
 4. Verify the Ed25519 signature against the resulting bytes.
+5. **Freshness.** Reject the response if `served_at` is more than a
+   configured bound in the past (RECOMMENDED ≤ 300 seconds) or is
+   in the future beyond a small clock-skew allowance. A signature
+   that verifies over a stale `served_at` is a replay; the freshness
+   check is what makes the "observed at the time of the response"
+   attestation meaningful.
 
 If any step fails — `key_id` does not resolve, the public key
-returned is outside its `not_before`/`not_after` window (§11.2), or
-the Ed25519 signature does not verify — the response MUST be
-treated as untrusted. Consumers MUST NOT cache it, persist it, act
-on it, or surface it to downstream verifiers as if it had been
-attested. Consumers SHOULD retry once against the same authority
-(the failure may be a transient resolver misconfiguration) and
-SHOULD escalate to operators if the failure persists, since a
+returned is outside its `not_before`/`not_after` window (§11.2), the
+Ed25519 signature does not verify, or `served_at` is stale — the
+response MUST be treated as untrusted. Consumers MUST NOT cache it,
+persist it, act on it, or surface it to downstream verifiers as if it
+had been attested. Consumers SHOULD retry once against the same
+authority (the failure may be a transient resolver misconfiguration)
+and SHOULD escalate to operators if the failure persists, since a
 signature mismatch is the wire-level signal of resolver compromise
 or man-in-the-middle.
 
 The topology signature attests that the resolver, acting for the
-authority, observed a chain with exactly this shape at the time of
-the response. It does NOT attest end-to-end chain integrity — for
-that, a verifier needs the full event payloads and per-event
-signatures via `read_history`.
+authority, observed a chain with exactly this shape at `served_at`.
+It does NOT attest end-to-end chain integrity — for that, a verifier
+needs the full event payloads and per-event signatures via
+`read_history`.
 
 What topology consumers **can** verify on their own, using only the
 response and the resolver's public key:
@@ -2582,7 +2908,13 @@ A PhIP signed request MUST satisfy the following profile:
    - `@target-uri` (derived component)
    - `content-digest` (header, RFC 9530 SHA-256 digest of the request
      body; the header MAY be omitted only when the body is empty, in
-     which case `content-digest` is also omitted from the covered set)
+     which case `content-digest` is also omitted from the covered set).
+     The resolver MUST recompute the digest over the received body and
+     reject the request if it does not match the `Content-Digest`
+     header value — RFC 9421 signature verification proves only that
+     the *declared* digest was signed, not that it matches the actual
+     bytes, so without this check the body (the event being pushed)
+     remains swappable.
    - `phip-actor` (header — defined in 3 below)
 3. **Required signature parameters.** The `Signature-Input` value
    MUST also carry these RFC 9421 §2.3 parameters:
@@ -2599,9 +2931,16 @@ A PhIP signed request MUST satisfy the following profile:
 5. **Signature freshness.** The `created` parameter MUST be within
    ±300 seconds of the resolver's current time. Older or future-dated
    requests MUST be rejected to mitigate replay.
-6. **Replay window.** Resolvers SHOULD maintain a short-lived cache
-   (≥ 600 seconds) of seen signature values keyed by `keyid` and
-   `created` to reject exact replays.
+6. **Replay window.** Resolvers enforcing `policy: capability` MUST
+   maintain a short-lived cache (covering at least the full ±300 s
+   freshness window, RECOMMENDED ≥ 600 seconds) of seen signatures and
+   reject exact replays. To avoid false rejections of distinct
+   legitimate requests from the same key in the same second, the cache
+   MUST key on the full signature `value` (not merely `keyid`+`created`).
+   (For idempotent GETs this is defense-in-depth; for PUSH the
+   `event_id` dedup of §12.3 is the primary replay guard, so this is a
+   SHOULD for read-only requests and a MUST only where a signed request
+   carries a state-changing body.)
 
 Example (RFC 9421 illustrative format):
 
@@ -2626,12 +2965,12 @@ The resolver verifies by:
 4. Verifying the Ed25519 signature against the resolved key.
 5. Mapping `PhIP-Actor` to the requesting-actor identity for the 
    §11.5.2 step-7 check. The resolver MUST verify that the signing 
-   key (`keyid`) is authorized to act for `PhIP-Actor` — typically 
-   by checking that `PhIP-Actor`'s `phip:keys` attribute references 
-   the same key, or that the key actor's history records a 
-   `delegated_signing_for` relation pointing at `PhIP-Actor` (an 
-   informal pattern; v0.1 leaves the binding mechanism to operator 
-   policy).
+   key (`keyid`) is authorized to sign for `PhIP-Actor` using the 
+   `key_id`→`actor` binding rule of §11.1.1 (same authority, plus 
+   either `keyid` == `PhIP-Actor` or a `signing_key_for` relation on 
+   the key resource targeting `PhIP-Actor`). This is the same binding 
+   used for event signatures; there is no separate, weaker rule for 
+   request signing.
 
 If any step fails, the resolver MUST reject with `INVALID_SIGNATURE` 
 (401) for cryptographic failures or `MISSING_CAPABILITY` (403) for 
@@ -2703,9 +3042,13 @@ initial `state`, and any initial `identity`, `relations`, or `attributes`.
 ```
 
 The resolver MUST validate: event signature, `phip_id` uniqueness within 
-the namespace, and that the initial state is valid for the object type 
-(see Section 9). The resolver MUST reject creation if the `phip_id` is 
-already registered.
+the namespace, and that the initial state is a valid **entry** state for 
+the object type (see Section 9). "Valid entry state" means more than 
+track membership: the resolver MUST reject creation in a terminal state 
+(`consumed`, `disposed`, or `archived`) — an object cannot be born 
+unable to accept any event — and MUST reject the per-type narrowings of 
+§9 (e.g. a `design` created directly in `deployed`). The resolver MUST 
+reject creation if the `phip_id` is already registered.
 
 CREATE is only valid within the caller's own authority. An actor MUST NOT 
 create objects in a foreign namespace. Cross-org object creation requires 
@@ -2837,11 +3180,24 @@ MUST match the current chain head of the target object.
 The resolver MUST validate, in order:
 
 1. Event structure (required fields, known event type)
-2. Event signature (resolve `key_id`, verify)
-3. Capability token (if cross-org push)
-4. Hash chain continuity (`previous_hash` matches current head)
-5. Lifecycle transition validity (if `state_transition` event)
-6. Object model constraints (relation type constraints, track validity)
+2. Event signature (resolve `key_id`, verify, and confirm the 
+   `key_id`→`actor` binding of §11.1.1)
+3. **Duplicate detection.** If an event with this `event_id` has 
+   already been *successfully appended* to this object, return 
+   `DUPLICATE_EVENT` (409) without appending again. This step MUST 
+   run **before** hash-chain continuity (step 5), so that a 
+   retried-after-lost-response PUSH — which carries the same 
+   `event_id` but a now-stale `previous_hash` — is recognized as a 
+   duplicate rather than misreported as `CHAIN_CONFLICT`. Deduplication 
+   keys ONLY on successfully-appended events: an `event_id` that was 
+   *rejected* (e.g. by a prior `CHAIN_CONFLICT`) MUST NOT be recorded, 
+   so the legitimate re-sign-and-retry of §12.3.1 — which reuses the 
+   `event_id` with a corrected `previous_hash` — is not wrongly 
+   rejected as a duplicate.
+4. Capability token (if cross-org push)
+5. Hash chain continuity (`previous_hash` matches current head)
+6. Lifecycle transition validity (if `state_transition` event)
+7. Object model constraints (relation type constraints, track validity)
 
 If validation fails at any step, the resolver MUST return the appropriate 
 error response (see Section 12.6) and MUST NOT append the event.
@@ -3036,9 +3392,13 @@ projections (current state, no history).
 }
 ```
 
-`total` is the total count of matching objects (MAY be approximate for 
-performance). `next_cursor` is `null` when no more results exist. 
-`limit` defaults to 100 and MUST NOT exceed 1000.
+`total` is the count of matching objects **the requesting caller is 
+permitted to read** (MAY be approximate for performance). It MUST NOT 
+count objects omitted by the access-control filter of §11.5.3 — 
+reporting a `total` larger than `matches` would leak the existence and 
+count of restricted objects, exactly the signal §11.5.3 suppresses. 
+`next_cursor` is `null` when no more results exist. `limit` defaults to 
+100 and MUST NOT exceed 1000.
 
 #### 12.4.5 Query Scope
 
@@ -3047,9 +3407,16 @@ Cross-namespace and cross-authority queries are not supported in PhIP
 v0.1. A client that needs to query across authorities MUST issue 
 separate QUERY requests to each authority.
 
-QUERY does not require authentication by default — it returns the same 
-objects that GET would return. Access control on QUERY results, if 
-implemented, SHOULD be consistent with access control on GET.
+QUERY does not require authentication for objects that are 
+world-readable — an anonymous QUERY returns the same `public` objects an 
+anonymous GET would. But access control on QUERY results is **not 
+optional**: a resolver MUST apply the same `phip:access` filtering to 
+QUERY that it applies to GET (§11.5.3) — restricted objects the caller 
+cannot read MUST NOT appear in `matches` and MUST NOT be counted in 
+`total`. "Same objects that GET would return" means exactly that, 
+including GET's access decision; it is not a licence to skip filtering. 
+(Earlier drafts phrased this as "if implemented, SHOULD," which 
+contradicted the §11.5.3 MUST; the MUST governs.)
 
 ### 12.5 Batch Operations
 
@@ -3192,7 +3559,7 @@ structure is not normative.
 | `TERMINAL_STATE` | 409 | Object is in a terminal state and cannot accept events |
 | `INVALID_SIGNATURE` | 401 | Event signature verification failed |
 | `KEY_NOT_FOUND` | 401 | The `key_id` in the signature could not be resolved |
-| `KEY_EXPIRED` | 401 | The signing key's validity window does not cover the event timestamp |
+| `KEY_EXPIRED` | 401 | The signing key's validity window does not cover the event timestamp, or the key was revoked at or before that timestamp (`revoked_at`, §11.2.2) |
 | `MISSING_CAPABILITY` | 403 | Cross-org push or restricted read without a capability token |
 | `INVALID_CAPABILITY` | 403 | Capability token signature invalid, expired, or scope insufficient |
 | `ACCESS_DENIED` | 403 | Read denied by the object's `phip:access` policy (Section 11.5) |
@@ -3235,6 +3602,7 @@ fields:
 | `query_capabilities` | object | MAY | Optional map describing supported filter operators, glob syntax, sort orders |
 | `root_key` | string | SHOULD | PhIP URI of this authority's root key (Section 4.6.1). Clients use this to anchor trust for transfer verification |
 | `mirror_urls` | array of strings | MAY | URLs of read-only mirrors hosting frozen snapshots of this authority's records. See Section 4.6.5 |
+| `predecessor_root_keys` | array of objects | SHOULD (when this authority has received transfers) | Independent trust anchors for verifying transfers/mirrors of predecessor authorities. Each entry `{ "authority": "...", "key_id": "phip://.../keys/root", "thumbprint": "sha256:..." }` pins the SHA-256 thumbprint of a predecessor's root public key, published by this (live) authority under its own DNS. Verifiers checking a mirror or transferred chain (§4.6.3 check 6, §4.6.5) MUST anchor on this rather than on a fingerprint served by the party under verification |
 | `successor` | object | MAY | Present iff this authority has been transferred. Object: `{ "authority": "newco.example", "transfer_event_id": "...", "effective_from": "..." }`. Clients SHOULD redirect subsequent requests to the successor |
 | `delegations` | array of objects | MAY | Active sub-namespace delegations. See Section 4.5.1 for entry shape |
 | `conformance_class` | string | SHOULD | One of `full`, `read-only`, `mirror`, `client-only` (Section 13). Absence implies `full` for compatibility with v0.1 resolvers |
@@ -3356,7 +3724,8 @@ A Full resolver MUST:
 - Enforce lifecycle transition rules within the assigned track
 - Validate process event inputs/outputs and enforce `consumed` transitions
 - Validate lot split/merge operations
-- Verify event signatures against resolved key resources (Section 11.2)
+- Verify event signatures against resolved key resources (Section 11.2), 
+  including the `key_id`→`actor` authorization binding (Section 11.1.1)
 - Validate key validity windows (`not_before` / `not_after`) against 
   event timestamps
 - Maintain hash chain integrity per RFC 8785 (JCS) serialization
@@ -3391,10 +3760,12 @@ resolver **except** the write operations. Specifically, it MUST:
 - Support cursor pagination
 
 A Read-Only resolver MUST reject CREATE and PUSH attempts with 
-`405 Method Not Allowed` (HTTP-level — there is no PhIP error code 
-for this case, since the server is not refusing on protocol grounds 
-but on capability). The response body SHOULD include an error 
-envelope with code `OPERATION_NOT_SUPPORTED`:
+`405 Method Not Allowed` and a body carrying the `OPERATION_NOT_SUPPORTED` 
+error envelope (§12.6.1). Emitting the envelope is a MUST here, matching 
+the identical requirement for batch endpoints (§12.5.4) and Mirror QUERY 
+(§13.3) — the earlier claim that "there is no PhIP error code for this 
+case" was incorrect, since `OPERATION_NOT_SUPPORTED` (405) is a 
+registered code covering exactly a conformance-class refusal:
 
 | Code | HTTP | Description |
 |---|---|---|
@@ -3479,20 +3850,57 @@ a release.
 
 ## 14. Security Considerations
 
-[TODO: expand each]
-
-- **Key compromise** — if a signing key is compromised, historical events 
-  signed with it remain in the record. Key rotation and revocation procedures 
-  are required.
-- **Authority compromise** — an authority can issue fraudulent capability 
-  tokens. Downstream consumers should apply skepticism proportional to 
+- **Key compromise and revocation reach** — if a signing key is 
+  compromised, historical events signed with it remain in the record. 
+  Revocation (§11.2.2, `revoked_at`) invalidates the key's signatures 
+  from `revoked_at` forward, but because event `timestamp` is 
+  self-asserted (§10.1), an attacker holding a compromised private key 
+  can mint events **backdated** to before `revoked_at` that still 
+  satisfy the validity rule. On an honest live resolver the hash chain 
+  prevents inserting such events (the head has already advanced), but 
+  offline bundles (§4.3.4), mirrors (§4.6.5), and forked histories have 
+  no such backstop. Mitigations: keep signing-key lifetimes short so 
+  the backdating window is small; resolvers MAY record a server-side 
+  receive time out of band; high-stakes verifiers SHOULD cross-check 
+  event timestamps against an independent source (e.g. a transparency 
+  log or countersigned checkpoint) rather than trusting the signer's 
+  clock. A future revision may add a resolver countersignature carrying 
+  an authenticated append time.
+- **Key–actor attribution** — a verifying signature proves only that a 
+  key holder produced the bytes. Attribution to an `actor` depends on 
+  the `key_id`→`actor` binding of §11.1.1; verifiers that skip that 
+  binding accept impersonated events. Resolvers MUST enforce it.
+- **History withholding / truncation** — the hash chain is 
+  tamper-evident against *modifying* retained events, but a malicious 
+  authority or mirror can *withhold* the tail: serving genesis→E[k] 
+  yields an internally valid prefix that a first-time reader cannot 
+  distinguish from the complete chain (`history_length` / 
+  `history_head` are resolver-asserted and unsigned). A reader holding 
+  a previously-observed head detects non-advancement or rollback; a 
+  fresh reader cannot. Mitigations: pin or gossip the latest known head 
+  out of band for high-value objects; prefer authorities that publish a 
+  signed, monotonically-increasing checkpoint of chain head/length. 
+  This is a known limitation of the v0.1 model (see G3, which is scoped 
+  accordingly) and a candidate for a signed-checkpoint mechanism in a 
+  future revision.
+- **Authority compromise** — an authority can issue fraudulent 
+  capability tokens and, if it also holds its root key online, forge 
+  delegations (§4.5) and transfers (§4.6). Keeping the root key in cold 
+  storage (§4.6.1) confines a web-server compromise to operational 
+  scope. Downstream consumers should apply skepticism proportional to 
   object criticality.
 - **Replay attacks** — event timestamps and UUIDs MUST be validated. 
-  Resolvers MUST reject duplicate event_ids.
+  Resolvers MUST reject duplicate `event_id`s (§12.3, dedup runs before 
+  chain-continuity). RFC 9421 signed requests carry their own freshness 
+  window and replay cache (§11.6.2).
 - **Denial of service** — QUERY endpoints are a potential amplification 
   vector. Rate limiting is RECOMMENDED.
-- **URI squatting** — PhIP relies on DNS for authority. DNS hijacking 
-  would compromise namespace integrity.
+- **URI squatting and first-contact trust** — PhIP relies on DNS for 
+  authority; DNS hijacking would compromise namespace integrity. A 
+  self-signed bootstrap key (§11.2.4) is trust-on-first-use: a malicious 
+  authority or a hijack at first contact can serve divergent anchors to 
+  different readers undetectably. High-stakes deployments SHOULD pin 
+  bootstrap and root-key fingerprints out of band (§4.6.3).
 
 ---
 
@@ -3710,6 +4118,21 @@ Issues identified through scenario stress-testing and systematic review.
 | ~~A35~~ | HTTP authentication | New Section 12.8: PhIP-Capability is the only protocol-level auth scheme; mTLS is a transport overlay (does not replace event signatures); non-protocol endpoints free to use any scheme; basic/bearer/API-key MUST NOT route restricted reads or writes |
 | ~~A36~~ | Conformance levels | Section 13 restructured into four classes (Full / Read-Only / Mirror / Client-Only); new `OPERATION_NOT_SUPPORTED` (405) error code; new `conformance_class` field in `/meta` |
 | ~~A37~~ | Schema versioning | New Section 8.4: semver MAJOR.MINOR with explicit additive vs. breaking change rules, versioned `$id` URLs, `version` field in schemas (all v0.1 schemas seeded at 1.0), advertise via `/meta.schema_namespaces`, 12-month minimum compatibility window |
+| ~~A43~~ | No `key_id`→`actor` binding (signature attributable to any key holder) | §11.1.1: normative binding (same authority + self-key or `signing_key_for` relation, §7.1); enforced on write and verify; replaces the undefined `delegated_signing_for` |
+| ~~A44~~ | §11.2.2 "valid iff active" contradicted "historical events remain valid"; revocation not durable | Validity scoped to event timestamp; `revoked_at` on `phip:keys`; reject events dated ≥ `revoked_at`; no reactivating revoked/expired keys; caching (§11.2.5) must observe revocation |
+| ~~A45~~ | Delegation trust bridge was an unsigned `/meta` field (web-server compromise → namespace hijack) | §4.5.1: delegation entries root-key signed; §4.5.2 verifies the signature; dropped the unbacked "`/meta` is a PhIP object with history" claim; `meta.json` → 1.3 |
+| ~~A46~~ | Conflicting `authority_transfer` events had no tiebreak | §4.6.3 check 6: first-transfer-wins per namespace, ordered by the source authority record's hash chain |
+| ~~A47~~ | Forked-history mirror undetectable once source DNS dies | §4.6.5 + `/meta.predecessor_root_keys` (§12.7): the live successor publishes an independent anchor for the source root key |
+| ~~A48~~ | §11.5.2 step-4 `granted_to` match broke `authenticated` policy and the `"*"` topology flow | Step 4 does token-intrinsic checks only; the `granted_to` match runs once, at step 7 |
+| ~~A49~~ | `granted_to: "*"` danger controls were issuer-advice only | §11.3.4 step 3: resolver MUST reject `"*"` tokens with push/`read_history`/`read_query` scope; `"*"` honored only for `read_topology`/`read_state` |
+| ~~A50~~ | Topology signature had no freshness/completeness binding (replay + truncation) | §11.5.6.4: signed object now covers `served_at` + `next_cursor` (six fields); client freshness check; `topology-response.json` → 1.2 |
+| ~~A51~~ | `DUPLICATE_EVENT` dedup absent from the §12.3 order, breaking the §12.3.2 idempotency guarantee | §12.3: dedup runs before chain-continuity, keyed on successfully-appended events only |
+| ~~A52~~ | QUERY ACL filtering MUST vs optional; `total` could leak restricted-object existence | §12.4.5 filtering is MUST (aligned with §11.5.3); §12.4.4 `total` excludes objects the caller cannot read |
+| ~~A53~~ | §13.2 "there is no PhIP error code for this case" contradicted the registry | Corrected wording; emitting `OPERATION_NOT_SUPPORTED` (405) is MUST, matching §12.5.4 / §13.3 |
+| ~~A54~~ | No terminal path without passing `qualified` (couldn't abandon a concept/design/prototype) | §9.2.1: added `concept`/`design`/`prototype` → `disposed` abandon edges |
+| ~~A55~~ | `identity` declared a projection but no event could write it | §5.2.2: `attribute_update` with reserved namespace `"identity"`; carries §5.2.1 corrections and §6.4.1 quantity draw-down |
+| ~~A56~~ | Conservation tolerance ε defined three inconsistent ways, SHOULD under a MUST-reject | §10.4.1 yield ε fixed at `1e-6`; §10.5.1 lot ε = coarsest declared `precision` else `1e-6 × Q` — deterministic and normative |
+| ~~A57~~ | Lot transition semantics, multi-input yield, process host, design states, CREATE terminal, software_update, RFC 9421, CHAIN_CONFLICT scope | §10.5 (split/merge effect the `consumed` transition), §10.4.1 per-input `yields`, §10.4 `process` host = `outputs[0]`, §6.2 (design not `deployed`/`maintained`), §12.1 (no terminal initial state), §10.2 (`software_update` projection), §11.6.2 (content-digest recompute + replay cache), §11.5.4 (`read_topology` in the head-suppression carve-out) |
 
 ### A.2 Open Issues — Post-v0.1
 

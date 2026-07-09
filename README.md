@@ -79,12 +79,16 @@ Protocol operations: `CREATE`, `GET`, `PUSH`, `QUERY`, `history`,
 
 ## Try it
 
-### Run the reference resolver
+### Run the reference server
+
+The reference server lives in its own repo,
+[`phip-server`](https://github.com/mfgs-us/phip-server) (Python +
+FastAPI, Docker Compose for one-command spinup):
 
 ```bash
-cd reference
-npm install
-PHIP_AUTHORITY=test.local PHIP_PORT=8080 npm start
+git clone https://github.com/mfgs-us/phip-server
+cd phip-server
+PHIP_AUTHORITY=test.local docker compose up -d
 ```
 
 In another terminal, prove it works:
@@ -92,7 +96,7 @@ In another terminal, prove it works:
 ```bash
 cd tests/conformance
 node run.js http://127.0.0.1:8080 --authority test.local
-# 76 passed, 0 failed
+# all passed, 0 failed
 ```
 
 ### Validate any other PhIP server
@@ -118,19 +122,24 @@ See [**IMPLEMENTATIONS.md**](./IMPLEMENTATIONS.md) for the current
 registry. To add yours, open a PR after passing the vectors and (for
 servers) the conformance suite.
 
-Planned first-party implementations under
+First-party implementations under
 [github.com/mfgs-us](https://github.com/mfgs-us):
 
-- `phip-py` — Python client library
-- `phip-rs` — Rust client library (no_std-friendly for embedded)
-- `phip-server` — production server (Go, single binary)
-- `phip-cli` — operator CLI (Go)
+- [`phip-py`](https://github.com/mfgs-us/phip-py) — Python client
+  library (URI resolution, event signing, chain verification, federation)
+- [`phip-server`](https://github.com/mfgs-us/phip-server) — reference +
+  production server (Python + FastAPI, Postgres or SQLite, Docker Compose)
+- [`phip-cli`](https://github.com/mfgs-us/phip-cli) — operator CLI, built
+  on `phip-py`
+
+Planned:
+
 - `phip-js` — JavaScript / TypeScript client library
+- `phip-rs` — Rust client library (no_std-friendly for embedded)
 - `phip-datacenter` — vertical example application
 
 The `phip` repo (this one) holds the spec, schemas, conformance suite,
-test vectors, and a minimal reference. Everything else lives in its
-own repo.
+and test vectors. Everything else lives in its own repo.
 
 ## Repository layout
 
@@ -164,10 +173,11 @@ See [**CONTRIBUTING.md**](./CONTRIBUTING.md). The PR checklist requires
 passing:
 
 - Reference-server smoke (run via [`phip-server`](https://github.com/mfgs-us/phip-server))
-- `cd tests && npm run self-check` — language-agnostic vectors (189
+- `cd tests && npm run self-check` — language-agnostic vectors (210
   assertions)
 - `cd tests/conformance && node run.js <url>` — HTTP conformance suite
-  against a running resolver (76 assertions plus federation §20)
+  against a running resolver (112 assertions across 21 sections;
+  federation §20 and topology §21 are opt-in, gated on `/meta`)
 
 Spec changes should reference an Appendix A entry. Editorial changes
 can skip the issue step.

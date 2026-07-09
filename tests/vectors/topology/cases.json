@@ -3,12 +3,13 @@
   "cases": [
     {
       "name": "valid-multi-event",
-      "description": "3-event chain (created → state_transition → attribute_update). Signature MUST verify against test-key-alice's public key over the JCS canonicalization of {disclosure, page_length, phip_id, topology}. Chain walk MUST succeed: entry[N].previous_hash == entry[N-1].event_hash.",
+      "description": "3-event chain (created → state_transition → attribute_update). Signature MUST verify against test-key-alice's public key over the JCS canonicalization of {disclosure, next_cursor, page_length, phip_id, served_at, topology}. Chain walk MUST succeed: entry[N].previous_hash == entry[N-1].event_hash.",
       "verifying_key_id": "test-key-alice",
       "response": {
         "phip_id": "phip://acme.example/projects/widget-v3",
         "page_length": 3,
         "disclosure": "topology",
+        "served_at": "2026-01-22T15:00:00Z",
         "topology": [
           {
             "event_id": "40000000-0000-4000-a000-000000000001",
@@ -35,7 +36,7 @@
         "topology_signature": {
           "algorithm": "Ed25519",
           "key_id": "phip://acme.example/keys/test-key-alice",
-          "value": "t3AmEfRJwjAbTZNd64IL5MsqAXZdrOdDx6qtCsS86OMDNMmVWrlh1foXQzCiamuujzlznZJYyXwQnrmmQQsFCw"
+          "value": "ElGolg6qocTI8k205VbdTv6RTwNUu0MidQ3AGXsk8JIFKgiHFPoZOndhqk0y6kXHRhqfhEs8HDypEXnQoJAYDA"
         },
         "next_cursor": null
       },
@@ -52,6 +53,7 @@
         "phip_id": "phip://acme.example/projects/widget-v3",
         "page_length": 1,
         "disclosure": "topology",
+        "served_at": "2026-01-22T15:00:00Z",
         "topology": [
           {
             "event_id": "40000000-0000-4000-a000-000000000001",
@@ -64,7 +66,7 @@
         "topology_signature": {
           "algorithm": "Ed25519",
           "key_id": "phip://acme.example/keys/test-key-alice",
-          "value": "D-bSiRwTW2XpKzAeBGzbQxXVm-9a1Rs2Ar5QiuyOVxyBgRijXZeDDasRL1tnwMOa8oG3q8l-z02quqFnkOniCQ"
+          "value": "gB7WYqKOLaNFROUaUxRcgStLK-szjGJaz7RnpdB7StlV-lonbgEloBRr_mj4qcpSwyqSRoqSEKmpV4Q-bTihCQ"
         },
         "next_cursor": null
       },
@@ -81,6 +83,7 @@
         "phip_id": "phip://acme.example/projects/widget-IMPOSTER",
         "page_length": 2,
         "disclosure": "topology",
+        "served_at": "2026-01-22T15:00:00Z",
         "topology": [
           {
             "event_id": "40000000-0000-4000-a000-000000000001",
@@ -100,7 +103,7 @@
         "topology_signature": {
           "algorithm": "Ed25519",
           "key_id": "phip://acme.example/keys/test-key-alice",
-          "value": "P2jOriGX61xcbzwZbRnLt6FDW6WY_tHkCDCHQsIg2U3_3t-7s9t_OcUxP1Aq0b4iZlJJFW1HaODv85dVqyjzAw"
+          "value": "fUxK-rUxZZrHmppTOt4RjPs7Xn9JzU4UlunXw_9Sn_BHdLEIkZHwjfTzFCDM_e2vB3-5JDviu2M0XTnOccsMCg"
         },
         "next_cursor": null
       },
@@ -118,6 +121,7 @@
         "phip_id": "phip://acme.example/projects/widget-v3",
         "page_length": 2,
         "disclosure": "topology",
+        "served_at": "2026-01-22T15:00:00Z",
         "topology": [
           {
             "event_id": "40000000-0000-4000-a000-000000000001",
@@ -137,7 +141,7 @@
         "topology_signature": {
           "algorithm": "Ed25519",
           "key_id": "phip://acme.example/keys/test-key-alice",
-          "value": "9HRURcdgnZTmWew3lfOcJNA-q3QK3ndqMtDclzftot7alUlP6wEjlDAeewOmYQt2IvY435qVvo0XQ-PHqPzxBg"
+          "value": "Yt5XoYdKgDtvZ0yX7cACIVy3FTsBsq_8tr8AupoY3_JIww9O2qqhx4nitkIK0j7jiUgZNHqWtMxAmufuFPS8Aw"
         },
         "next_cursor": null
       },
@@ -155,6 +159,7 @@
           "phip_id": "phip://acme.example/projects/widget-v3",
           "page_length": 2,
           "disclosure": "topology",
+          "served_at": "2026-01-22T15:00:00Z",
           "topology": [
             {
               "event_id": "40000000-0000-4000-a000-000000000001",
@@ -174,7 +179,7 @@
           "topology_signature": {
             "algorithm": "Ed25519",
             "key_id": "phip://acme.example/keys/test-key-alice",
-            "value": "P2jOriGX61xcbzwZbRnLt6FDW6WY_tHkCDCHQsIg2U3_3t-7s9t_OcUxP1Aq0b4iZlJJFW1HaODv85dVqyjzAw"
+            "value": "YYuRf-8Xma2cDdqxTl5P3hrpQtb2WTojW4_i8TA-ZR5v_xRBtLwtsgS3y_9_V9W7onG7cgaT1LF38yjiKjRuDQ"
           },
           "next_cursor": "sha256:efb7eedf9be5c7fa617335e206097e04a229974663261ebfb1b635c5ea7b1cb5"
         },
@@ -182,6 +187,7 @@
           "phip_id": "phip://acme.example/projects/widget-v3",
           "page_length": 1,
           "disclosure": "topology",
+          "served_at": "2026-01-22T15:00:00Z",
           "topology": [
             {
               "event_id": "40000000-0000-4000-a000-000000000003",
@@ -194,7 +200,7 @@
           "topology_signature": {
             "algorithm": "Ed25519",
             "key_id": "phip://acme.example/keys/test-key-alice",
-            "value": "RfZXX-vNQNLi5lPDccAUuVINS7Vp9GzSz1XE5_uGnrMCHZ_0OenC57aU8L2VFCxpTT-mE2BePyZUkrWEey1QAA"
+            "value": "nwwaq9MYXLqE3diZmVggRaamVNZDC0AVHXoSdlDk5jOAWpPIBhfSfm6yGpNBDzxU5zhLNTHBxIF6-2MfAqGtCQ"
           },
           "next_cursor": null
         }

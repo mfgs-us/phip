@@ -97,6 +97,93 @@ read-only PhIP resolver in the
 [mfgs-us/phip#10](https://github.com/mfgs-us/phip/pull/10) for the
 draft PR.
 
+### Fixed — schema / doc / test consistency sweep
+
+Repository review pass; no normative spec text changed.
+
+- `schemas/meta.json` → 1.2 (this revision only ever loosens what 1.1
+  accepted — no field that validated before is rejected now):
+  - `successor` no longer requires `namespaces` (not part of the §12.7
+    successor shape); `namespaces` is retained as an optional,
+    informational field. Required is now `{ authority, transfer_event_id }`;
+    `effective_from` is defined and SHOULD be present per §12.7 but is left
+    optional to avoid a tightening. Previously a spec-conformant
+    `successor` object was rejected.
+  - `schema_namespaces` items now accept the object form
+    `{ namespace, min, max }` in addition to strings, per §8.4.5.
+    Previously the spec's own object example failed validation.
+  - `tests/conformance/run.js` §20 successor probe now skips when
+    `/meta.successor` carries no concrete `namespaces` (rather than
+    probing a guessed `"any"` namespace and failing), keeping the schema
+    and the suite consistent about `namespaces` being optional.
+- `schemas/core.json` → 1.1:
+  - Added the missing conditional payload branch for `measurement`
+    events (`metric`, `value`, `as_of` required per §11.4.2).
+  - Tightened the signature `value` pattern to the strict unpadded-86-char
+    base64url form, matching `capability-token.json` and
+    `bundle-manifest.json` (an Ed25519 signature is always exactly 86
+    base64url chars).
+- `schemas/topology-response.json` → 1.1: same signature `value`
+  tightening as core.json.
+- `tests/vectors/self-check.js`: added a `[uri]` section that parses and
+  asserts the decomposition of every `uri/cases.json` fixture and the
+  rejection of every invalid case. `uri/cases.json` was previously
+  generated but never exercised despite the READMEs advertising URI-parse
+  coverage. Self-check 200 → 210 assertions.
+- `tests/conformance/run.js`: a connection-level failure (server down,
+  DNS miss, TLS reset) now reports a clear "could not reach the resolver"
+  message instead of dumping a stack trace that reads like a suite bug.
+- Docs: completed the Node-reference retirement cleanup that commit
+  `c3613f9` began — removed stale `cd reference` / in-tree-reference
+  instructions and the contradictory "Go" implementation stack from
+  `README.md`, `IMPLEMENTATIONS.md`, `VERSIONING.md`, and
+  `CONTRIBUTING.md`; refreshed stale assertion counts. Corrected the
+  `previous_hash` formula and the §12.x protocol-operation cross-references
+  in `TUTORIAL.md`.
+
+### Fixed — deep spec review (trust / federation / access / lifecycle / ops)
+
+Normative hardening from a systematic security-and-consistency review.
+Resolved as Appendix A entries A43–A57. Highlights:
+
+- **Trust attribution (A43, §11.1.1).** Defined the `key_id`→`actor`
+  authorization binding — a verifying signature is now attributable
+  (same authority + self-key or a new `signing_key_for` relation);
+  replaces the undefined `delegated_signing_for` reference.
+- **Key validity + revocation (A44, §11.2.2–.5).** Resolved the
+  "valid iff active" vs "historical events remain valid" contradiction
+  (validity is scoped to the event timestamp); added durable revocation
+  (`revoked_at`, no un-revoking, caching must observe it).
+- **Signed delegation (A45, §4.5).** Delegation entries are now
+  root-key signed; the cross-authority redirect trust bridge is
+  cryptographic, not an unsigned `/meta` field. Dropped the unbacked
+  "`/meta` is a PhIP object with history" claim.
+- **Federation anchors (A46–A47, §4.6).** First-transfer-wins tiebreak
+  for conflicting transfers; `predecessor_root_keys` in `/meta` as an
+  independent anchor so a forked mirror is detectable once source DNS
+  dies.
+- **Access control (A48–A50, §11.3–§11.5.6).** Fixed the §11.5.2 step-4
+  `granted_to` ordering; resolver MUST reject `"*"` tokens with
+  write/`read_history`/`read_query` scope; topology signature now binds
+  `served_at` + `next_cursor` (anti-replay, anti-truncation).
+- **Ops (A51–A53, §12).** `DUPLICATE_EVENT` dedup ordered before
+  chain-continuity; QUERY ACL filtering is MUST and `total` excludes
+  restricted objects; §13.2 error-code wording corrected.
+- **Lifecycle / object model (A54–A57, §5–§10).** Abandon edges
+  (concept/design/prototype → disposed); identity mutated via
+  `attribute_update` namespace `"identity"`; canonical ε for
+  conservation; lot_split/merge transition semantics; per-input `yields`
+  for multi-input provenance; `process` host object; design cannot enter
+  `deployed`/`maintained`; CREATE rejects terminal initial state.
+- **Security Considerations (§14) + G3** expanded to acknowledge
+  backdating-vs-revocation, history withholding/truncation, and TOFU
+  equivocation as known v0.1 limitations with mitigations.
+
+Schema bumps: `meta.json` → 1.3 (signed delegation, `predecessor_root_keys`);
+`core.json` → 1.1 (signing_key_for, identity namespace, abandon edges,
+process yields); `topology-response.json` → 1.2 (served_at + next_cursor).
+Self-check 210/210; vectors regenerated deterministically.
+
 ## [0.1.0-draft] — 2026-04-09
 
 ### Added
