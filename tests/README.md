@@ -30,6 +30,13 @@ npm run generate
 npm run self-check
 ```
 
+Check that every JSON Schema in `../schemas` compiles (Ajv strict mode,
+draft 2020-12):
+
+```
+npm run schemas-check
+```
+
 Run the HTTP conformance suite against a server:
 
 ```

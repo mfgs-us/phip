@@ -1,0 +1,6 @@
+name = "phip-formal"
+version = "0.1.0"
+defaultTargets = ["PhIPFormal"]
+
+[[lean_lib]]
+name = "PhIPFormal"
