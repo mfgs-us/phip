@@ -184,6 +184,10 @@ Schema bumps: `meta.json` → 1.3 (signed delegation, `predecessor_root_keys`);
 process yields); `topology-response.json` → 1.2 (served_at + next_cursor).
 Self-check 210/210; vectors regenerated deterministically.
 
+A42 (selective history disclosure, above) moved from Appendix A.2 to
+A.1 Resolved: §11.5.6 implements it. Appendix A.2 now lists no open
+issues.
+
 ## [0.1.0-draft] — 2026-04-09
 
 ### Added

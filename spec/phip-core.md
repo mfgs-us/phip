@@ -4118,6 +4118,7 @@ Issues identified through scenario stress-testing and systematic review.
 | ~~A35~~ | HTTP authentication | New Section 12.8: PhIP-Capability is the only protocol-level auth scheme; mTLS is a transport overlay (does not replace event signatures); non-protocol endpoints free to use any scheme; basic/bearer/API-key MUST NOT route restricted reads or writes |
 | ~~A36~~ | Conformance levels | Section 13 restructured into four classes (Full / Read-Only / Mirror / Client-Only); new `OPERATION_NOT_SUPPORTED` (405) error code; new `conformance_class` field in `/meta` |
 | ~~A37~~ | Schema versioning | New Section 8.4: semver MAJOR.MINOR with explicit additive vs. breaking change rules, versioned `$id` URLs, `version` field in schemas (all v0.1 schemas seeded at 1.0), advertise via `/meta.schema_namespaces`, 12-month minimum compatibility window |
+| ~~A42~~ | Selective history disclosure (no middle ground between `read_state` and `read_history`) | New §11.5.6 optional topology disclosure (`?disclosure=topology`): event IDs, types, timestamps, `previous_hash` links and per-entry `event_hash`, envelope-signed, no payloads/actors/signatures; new `read_topology` scope (§11.3.2); presenter-anonymous `granted_to: "*"` honored only for `read_topology`/`read_state` (§11.3.1, §11.3.4 step 3); `/meta.disclosures` advertisement (§12.7); `schemas/topology-response.json` |
 | ~~A43~~ | No `key_id`→`actor` binding (signature attributable to any key holder) | §11.1.1: normative binding (same authority + self-key or `signing_key_for` relation, §7.1); enforced on write and verify; replaces the undefined `delegated_signing_for` |
 | ~~A44~~ | §11.2.2 "valid iff active" contradicted "historical events remain valid"; revocation not durable | Validity scoped to event timestamp; `revoked_at` on `phip:keys`; reject events dated ≥ `revoked_at`; no reactivating revoked/expired keys; caching (§11.2.5) must observe revocation |
 | ~~A45~~ | Delegation trust bridge was an unsigned `/meta` field (web-server compromise → namespace hijack) | §4.5.1: delegation entries root-key signed; §4.5.2 verifies the signature; dropped the unbacked "`/meta` is a PhIP object with history" claim; `meta.json` → 1.3 |
@@ -4136,9 +4137,7 @@ Issues identified through scenario stress-testing and systematic review.
 
 ### A.2 Open Issues — Post-v0.1
 
-| # | Issue | Severity | Notes |
-|---|---|---|---|
-| A42 | Selective history disclosure | Medium | `read_state` and `read_history` were the only read scopes on history. There was no middle ground for "this object exists, has chain shape X, was last touched at T" without exposing payloads. Surfaces in the "private design with publicly listed instances" pattern: a public `assembly` `instance_of` a private `design`; downstream readers want to confirm the design's chain shape without seeing its contents. Proposed resolution: optional topology disclosure mode (§11.5.6) with `read_topology` scope; presenter-anonymous `granted_to: "*"` tokens (§11.3.1); `/meta.disclosures` advertisement (§12.7); envelope-signed response with per-entry `event_hash` for chain-walk verification. |
+None currently open.
 
 ---
 
