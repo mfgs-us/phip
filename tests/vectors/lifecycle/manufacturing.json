@@ -26,15 +26,18 @@
   ],
   "transitions": {
     "concept": [
-      "design"
+      "design",
+      "disposed"
     ],
     "design": [
       "prototype",
-      "qualified"
+      "qualified",
+      "disposed"
     ],
     "prototype": [
       "design",
-      "qualified"
+      "qualified",
+      "disposed"
     ],
     "qualified": [
       "stock",
@@ -66,6 +69,10 @@
       "to": "design"
     },
     {
+      "from": "concept",
+      "to": "disposed"
+    },
+    {
       "from": "design",
       "to": "prototype"
     },
@@ -74,12 +81,20 @@
       "to": "qualified"
     },
     {
+      "from": "design",
+      "to": "disposed"
+    },
+    {
       "from": "prototype",
       "to": "design"
     },
     {
       "from": "prototype",
       "to": "qualified"
+    },
+    {
+      "from": "prototype",
+      "to": "disposed"
     },
     {
       "from": "qualified",
@@ -156,10 +171,6 @@
       "to": "consumed"
     },
     {
-      "from": "concept",
-      "to": "disposed"
-    },
-    {
       "from": "design",
       "to": "concept"
     },
@@ -184,10 +195,6 @@
       "to": "consumed"
     },
     {
-      "from": "design",
-      "to": "disposed"
-    },
-    {
       "from": "prototype",
       "to": "concept"
     },
@@ -210,10 +217,6 @@
     {
       "from": "prototype",
       "to": "consumed"
-    },
-    {
-      "from": "prototype",
-      "to": "disposed"
     },
     {
       "from": "qualified",

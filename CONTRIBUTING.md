@@ -1,10 +1,10 @@
 # Contributing to PhIP
 
 The PhIP repo holds the specification, JSON schemas, language-agnostic
-test vectors, the HTTP conformance suite, and a minimal reference
-resolver. Client libraries (`phip-js`, `phip-py`, `phip-rs`, ...) and
-the production server (`phip-server`) live in their own repositories
-under [github.com/mfgs-us](https://github.com/mfgs-us).
+test vectors, and the HTTP conformance suite. Client libraries
+(`phip-js`, `phip-py`, `phip-rs`, ...) and the reference + production
+server (`phip-server`) live in their own repositories under
+[github.com/mfgs-us](https://github.com/mfgs-us).
 
 This guide covers contributing to **this** repo. For language-specific
 libraries, see the CONTRIBUTING file in each lib's repo.
