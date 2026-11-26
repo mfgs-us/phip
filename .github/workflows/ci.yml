@@ -27,7 +27,8 @@ jobs:
       - name: Committed vectors match the generator
         run: |
           npm run generate
-          git diff --exit-code -- vectors/
+          git status --porcelain -- vectors/
+          test -z "$(git status --porcelain -- vectors/)"
       - name: JSON Schemas compile (Ajv strict, draft 2020-12)
         run: npm run schemas-check
       - name: Conformance runner parses

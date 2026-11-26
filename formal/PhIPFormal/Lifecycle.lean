@@ -135,7 +135,8 @@ theorem qualified_is_frozen (d : Bool) :
 
 /-- A `design` object never reaches `deployed` or `maintained`… -/
 theorem design_never_in_service (s : MState) :
-    reachable MState.all (mStep true) s .deployed = false ∨ s = .deployed := by
+    (reachable MState.all (mStep true) s .deployed = false ∨ s = .deployed) ∧
+    (reachable MState.all (mStep true) s .maintained = false ∨ s = .maintained) := by
   cases s <;> decide
 
 /-- …a released design can still be retired (`stock → decommissioned`)… -/

@@ -46,13 +46,14 @@ phip/
 ```
 cd tests && npm ci
 npm run self-check                                     # vectors internally consistent
-npm run generate && git diff --exit-code -- vectors/   # committed vectors match generator
+npm run generate && test -z "$(git status --porcelain -- vectors/)"  # committed vectors match generator
 npm run schemas-check                                  # schemas compile
 cd ../formal && lake build                             # Lean proofs
 ```
 
 When a spec change touches wire-visible behavior, regenerate vectors in the
-same change. When it touches §9 or §11.3, update `formal/` in the same change.
+same change. When it touches §6.2, §9, §11.3, or the §11.5.2 scope table, update
+`formal/` in the same change.
 
 ## Ecosystem (Separate Repos)
 
