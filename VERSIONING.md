@@ -113,15 +113,15 @@ The `/.well-known/phip/meta` document advertises both:
 
 ## Reference implementation
 
-The reference resolver in `reference/` tracks the **current spec
-version** at HEAD. It does not maintain backward-compatibility
-shims. When the spec adds a new feature, the reference adds support
-in the same PR. When the spec breaks something, the reference breaks
-in the same PR.
+The reference server, [`phip-server`](https://github.com/mfgs-us/phip-server),
+tracks the **current spec version** at HEAD. It does not maintain
+backward-compatibility shims: when the spec adds a new feature, the
+server adds support in the same release; when the spec breaks
+something, the server breaks with it.
 
-The reference is a spec-validation tool, not a deployable
-production server. Production servers (`phip-server` and any
-language-specific equivalents) are responsible for their own
+`phip-server` is both the pedagogical and the production reference —
+it runs the spec end-to-end with persistent storage. Any
+language-specific equivalents are responsible for their own
 backward-compatibility windows.
 
 ## Conformance suite versioning

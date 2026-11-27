@@ -347,13 +347,17 @@ console.log("\n[topology]");
   };
 
   function verifyTopologySignature(response, keyId) {
-    // §11.5.6.4: construct {disclosure, page_length, phip_id, topology}
-    // from the response verbatim and JCS-canonicalize. Ignore all other
-    // top-level fields.
+    // §11.5.6.4: construct the six canonical envelope fields
+    // {disclosure, next_cursor, page_length, phip_id, served_at, topology}
+    // from the response verbatim and JCS-canonicalize. served_at binds
+    // freshness (anti-replay); next_cursor binds completeness
+    // (anti-truncation). Ignore all other top-level fields.
     const canonicalSigned = {
       disclosure: response.disclosure,
+      next_cursor: response.next_cursor ?? null,
       page_length: response.page_length,
       phip_id: response.phip_id,
+      served_at: response.served_at,
       topology: response.topology,
     };
     const bytes = Buffer.from(canonicalize(canonicalSigned), "utf8");
@@ -406,6 +410,47 @@ console.log("\n[topology]");
         `topology ${c.name} chain walk ${c.expected.chain_walk_succeeds ? "succeeds" : "rejects"}`,
       );
     }
+  }
+}
+
+// ── URI parsing — Section 4 ─────────────────────────────────────────
+console.log("\n[uri]");
+{
+  // Reference parser for phip://{authority}/{namespace}/{local-id}[/sub...].
+  // Mirrors the core.json phipUri pattern and the §4.1 grammar: an
+  // authority (DNS-like label, no spaces), then a namespace segment and a
+  // local-id segment, then zero or more sub-path segments. Every segment
+  // MUST be non-empty. Returns the decomposition, or null on rejection.
+  const SEGMENT = /^[A-Za-z0-9._~%-]+$/;
+  function parsePhipUri(uri) {
+    if (typeof uri !== "string") return null;
+    const m = /^phip:\/\/([^/]+)\/(.+)$/.exec(uri);
+    if (!m) return null;
+    const authority = m[1];
+    if (!/^[A-Za-z0-9.-]+$/.test(authority)) return null;
+    const segments = m[2].split("/");
+    if (segments.length < 2) return null; // need namespace + local-id
+    if (segments.some((s) => !SEGMENT.test(s))) return null; // no empty/invalid segments
+    const [namespace, local_id, ...sub_path] = segments;
+    return { authority, namespace, local_id, sub_path };
+  }
+
+  const { valid, invalid } = load("uri/cases.json");
+  for (const c of valid) {
+    const got = parsePhipUri(c.uri);
+    const want = {
+      authority: c.authority,
+      namespace: c.namespace,
+      local_id: c.local_id,
+      sub_path: c.sub_path,
+    };
+    assert(
+      got !== null && JSON.stringify(got) === JSON.stringify(want),
+      `uri ${c.uri} decomposes correctly`,
+    );
+  }
+  for (const c of invalid) {
+    assert(parsePhipUri(c.uri) === null, `uri ${c.uri} rejected (${c.reason})`);
   }
 }
 
