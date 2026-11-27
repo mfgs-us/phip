@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  vectors-and-schemas:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: tests/package-lock.json
+      - run: npm ci
+      - name: Test vectors are internally consistent
+        run: npm run self-check
+      - name: Committed vectors match the generator
+        run: |
+          npm run generate
+          git status --porcelain -- vectors/
+          test -z "$(git status --porcelain -- vectors/)"
+      - name: JSON Schemas compile (Ajv strict, draft 2020-12)
+        run: npm run schemas-check
+      - name: Conformance runner parses
+        run: node --check conformance/run.js
+
+  lean:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal
